@@ -1,0 +1,85 @@
+project:
+  name: ar_da3_waymo_cdit_formal_v2_7h1f
+  output_dir: /data/wlh/GLD/outputs/ar_diffusion_with_global_tokens/waymo_da3_cdit_formal_v2_7h1f_336x224
+  gld_code_dir: /data/wlh/GLD/code
+
+data:
+  root: /data/wlh/FreeDrive/data/waymo/processed-test
+  camera_ids: [0, 1, 2]
+  image_size: [224, 336]
+  history_frames: 7
+  future_frames: 1
+  frame_stride: 1
+  train_window_stride: 2
+  val_window_stride: 10
+  max_train_scenes: 0
+  max_val_scenes: 1
+  pose_scale: 50.0
+
+da3:
+  encoder_pretrained_path: /data/wlh/GLD/model/pretrained_models/da3
+  decoder_config_path: reprojuce_gld_on_waymo/decoder_ViTXL
+  rgb_decoder_ckpt: /data/wlh/GLD/code/reprojuce_gld_on_waymo/results/stage1-mae-waymo-336x224/001-RAE_DA3_MAE-bf16/checkpoints/1100000.pt
+  patch_size: 14
+  feature_dim: 6144
+  use_ema_decoder: true
+  encode_chunk_size: 1
+
+normalization:
+  enabled: true
+  mode: per_channel
+  num_batches: 256
+  eps: 1.0e-6
+  stats_path: normalizer_stats.pt
+  recompute: false
+
+model:
+  architecture: cdit_formal
+  hidden_size: 1024
+  num_heads: 16
+  depth: 18
+  global_tokens: 384
+  global_layers: 4
+  global_update_layers: 2
+  mlp_ratio: 4.0
+  dropout: 0.0
+  gradient_checkpointing: true
+
+training:
+  device: cuda:0
+  precision: bf16
+  seed: 7
+  batch_size: 8
+  num_workers: 8
+  max_steps: 1000000
+  lr: 3.0e-5
+  weight_decay: 0.01
+  grad_clip: 1.0
+  log_every: 50
+  val_every: 20000
+  full_ckpt_every: 100000
+  infer_ckpt_every: 20000
+  sample_steps: 100
+  ema_decay: 0.9995
+  compile: false
+  data_parallel: false
+
+loss:
+  feature_weight: 1.0
+  rgb_weight: 0.02   # monitor only; pred_clean remains detached.
+  rgb_loss_every: 250
+
+tricks:
+  history_camera_drop: 0.0
+  history_frame_drop: 0.0
+  global_condition_drop: 0.0
+  future_ray_drop: 0.0
+  ray_noise_std: 0.0
+  chain_forward_prob: 1.0
+  scheduled_sampling_max: 0.0
+  scheduled_sampling_warmup_steps: 1
+
+rollout:
+  frames: 20
+  sample_steps: 100
+  depth_method: da3
