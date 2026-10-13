@@ -1,0 +1,1228 @@
+                                                                 UniScene: Unified Occupancy-centric Driving Scene Generation
+
+                                            Bohan Li1,2 *, Jiazhe Guo3∗ , Hongsi Liu2∗ , Yingshuang Zou3∗ , Yikang Ding4∗ , Xiwu Chen5 , Hu Zhu2 , Feiyang Tan5 , Chi Zhang5 ,
+                                                         Tiancai Wang4 , Shuchang Zhou4 , Li Zhang6 , Xiaojuan Qi7 , Hao Zhao3 , Mu Yang4 , Wenjun Zeng2 , Xin Jin2†
+                                                             1
+                                                                 Shanghai Jiao Tong University, 2 Ningbo Institute of Digital Twin, Eastern Institute of Technology, China
+                                                             3
+                                                                 Tsinghua University, 4 MEGVII Technology, 5 Mach Drive, 6 Fudan University, 7 University of Hong Kong
+arXiv:2412.05435v2 [cs.CV] 11 Mar 2025
+
+
+
+
+                                               BEV Layouts                                                                                   Occupancy                  Video                      LiDAR
+                                                                        LiDAR Point Clouds                                             MMD                        FVD                        MMD
+                                                                                                 Multi-view Video                 11                        140                         4
+                                                                                                                                  10              - 71.1%                    - 41.4%                   - 31.6%
+                                                                                                                                                            120                        3.5
+                                                                                                                                   9
+                                                                                                                                   8                                                    3
+                                                                                                                                                            100
+                                                                                                                                   7                                                   2.5
+                                                                                                                                                            80
+                                                                                                                    …              6
+                                                                                                                                   5
+                                                                                                                                                                                        2
+                                                                                                                                                            60
+                                                                        Semantic Occupancy                                         4                                                   1.5
+                                                                                                                                   3                        40
+                                                                                                                                                                                        1
+                                                                                                                                   2
+                                                                                                                                                            20                         0.5
+                                                                                                                                   1
+                                               UniScene                                                                            0
+                                                                                                                                       OccWorld     Ours
+                                                                                                                                                             0                          0
+                                                                                                                                                                  Drive-WM      Ours         LiDARDM       Ours
+
+                                                                          (a) Overview of the proposed UniScene                    (b) Generation performance comparison on different tasks
+                                         Figure 1. (a) Overview of UniScene. Given BEV layouts, UniScene facilitates versatile data generation, including semantic occupancy,
+                                         multi-view video, and LiDAR point clouds, through an occupancy-centric hierarchical modeling approach. (b) Performance comparison on
+                                         different generation tasks. UniScene delivers substantial improvements over SOTA methods in video, LiDAR, and occupancy generation.
+
+                                                                           Abstract                                     1. Introduction
+
+                                         Generating high-fidelity, controllable, and annotated train-                   The generation of high-quality driving scenes is a promising
+                                         ing data is critical for autonomous driving. Existing methods                  approach for autonomous driving (AD), as it helps miti-
+                                         typically generate a single data form directly from a coarse                   gate the high resource demands associated with real-world
+                                         scene layout, which not only fails to output rich data forms                   data collection and annotation [24, 31, 42, 52]. Recent ad-
+                                         required for diverse downstream tasks but also struggles to                    vancements in generative models, particularly diffusion mod-
+                                         model the direct layout-to-data distribution. In this paper,                   els [24, 31, 42, 52], have made it possible to generate realistic
+                                         we introduce UniScene, the first unified framework for gener-                  synthetic data [54, 63, 80], facilitating the training of down-
+                                         ating three key data forms — semantic occupancy, video, and                    stream tasks. Existing methods [15, 63, 66, 70, 91] typically
+                                         LiDAR — in driving scenes. UniScene employs a progres-                         use layout conditions derived from coarse geometric labels
+                                         sive generation process that decomposes the complex task of                    (e.g., BEV maps and 3D bounding boxes) as input to guide
+                                         scene generation into two hierarchical steps: (a) first gener-                 scene generation. The resulting synthetic data are then lever-
+                                         ating semantic occupancy from a customized scene layout                        aged to improve downstream tasks such as BEV segmenta-
+                                         as a meta scene representation rich in both semantic and ge-                   tion [34, 37, 73] and 3D object detection [8, 12, 19, 46, 65].
+                                         ometric information, and then (b) conditioned on occupancy,                       Nevertheless, as depicted in Tab. 1, existing driving scene
+                                         generating video and LiDAR data, respectively, with two                        generation models predominantly focus on generating data
+                                         novel transfer strategies of Gaussian-based Joint Rendering                    in a single format (e.g., RGB video) [15, 63, 66, 71, 85],
+                                         and Prior-guided Sparse Modeling. This occupancy-centric                       without fully exploring the potential of generating data
+                                         approach reduces the generation burden, especially for in-                     across multiple formats. This limits their applicability for a
+                                         tricate scenes, while providing detailed intermediate repre-                   wide range of downstream tasks that require diverse sensor
+                                         sentations for the subsequent generation stages. Extensive                     data (i.e., RGB video, LiDAR) to ensure sufficient training
+                                         experiments demonstrate that UniScene outperforms previ-                       for real-world scenarios [2, 5, 35, 38, 62]. Furthermore,
+                                         ous SOTAs in the occupancy, video, and LiDAR generation,                       previous methods attempt to capture the real-world distri-
+                                         which also indeed benefits downstream driving tasks. Project                   bution with a single-step layout-to-data modeling process
+                                         page: https://arlo0o.github.io/uniscene/.                                      given only coarse input conditions (e.g., BEV layouts or 3D
+                                           * Equal contribution                                                         boxes) [15, 66, 71]. This direct learning strategy hinders the
+                                           † Corresponding author                                                       model’s ability to capture the complex distributions inherent
+  Method                Multi-view   Video   LiDAR   Occupancy   learning methods [15, 55, 66, 71, 85], our approach utilizes
+  BEVGen [55]                                                    the generated occupancy as an intermediate representation
+  BEVControl [80]                                                to guide the subsequent generation. To bridge the represen-
+  DriveDreamer [85]
+  Vista [16]
+                                                                 tation gap and ensure high-fidelity generation of video and
+  MagicDrive [15]                                                LiDAR data, we introduce two novel representation trans-
+  Drive-WM [66]                                                  fer strategies: 1). A geometry-semantics joint rendering
+  LiDARGen [90]                                                  strategy, utilizing Gaussian Splatting [26, 88], to facilitate
+  LiDARDiffusion [50]
+  LiDARDM [91]
+                                                                 conditional video generation with detailed multi-view se-
+                                                                 mantic and depth maps; 2). A prior-guided sparse modeling
+  OccSora [59]
+  OccLLama [68]                                                  scheme for LiDAR data generation, which efficiently gener-
+  OccWorld [86]                                                  ates LiDAR points using occupancy-based priors. The con-
+  UniScene (Ours)                                                tributions of our framework can be summarized as follows:
+Table 1. Comparison of generation forms with existing works.     • We introduce UniScene, the first unified framework for
+                                                                    versatile data generation in driving scenes. It jointly gen-
+in real-world driving scenes (e.g., realistic geometry and          erates high-quality data across three formats: semantic
+appearance), often resulting in suboptimal performance, as          occupancy, multi-view video, and LiDAR point clouds.
+illustrated in Fig. 1 (b). To address this challenge, recent     • We propose a decomposed conditional generation
+methods in data-driven realistic generation [28, 44, 56] have       paradigm that progressively models complex driving
+sought to model complex distributions using intermediate            scenes, effectively reducing the difficulty of generation.
+representations as inductive biases, enabling the generation        Fine-grained semantic occupancy is first generated as an
+of high-quality results through hierarchical steps.                 intermediate representation, which then facilitates the sub-
+    Thus, exploring an optimal intermediate representation          sequent generation of video and LiDAR data.
+for complex 3D generation tasks in autonomous driving is         • To bridge the domain gap between occupancy and other
+crucial for achieving high-quality outputs. Semantic oc-            data formats, we introduce two novel representation trans-
+cupancy, widely used in autonomous driving perception               fer strategies: one based on Gaussian Splatting rendering
+tasks, has recently been recognized as a superior scene rep-        and the other leveraging a sparse modeling scheme.
+resentation due to its rich semantic and geometric informa-      • Extensive experiments across various generation tasks
+tion [21, 57, 62]. Building on this, recent advancements in         demonstrate that UniScene outperforms state-of-the-art
+volumetric generation [31, 50, 90, 91] highlight the signifi-       methods in video, LiDAR, and occupancy generation.
+cant potential of semantic occupancy, not only for depicting        Moreover, the data generated by UniScene leads to signifi-
+driving environments with enhanced 3D structural details            cant enhancements in downstream tasks, including occu-
+but also for enabling more accurate and diverse scene gen-          pancy prediction, 3D detection, and BEV segmentation.
+eration. Compared to traditional 2D representations, such
+as BEV maps [15, 54, 63, 66, 71, 80, 85], 3D occupancy           2. Related Work
+offers a richer and more detailed scene representation. Given    Semantic Occupancy Representation. Semantic occu-
+these advantages, we argue that semantic occupancy is an         pancy has emerged as a prominent 3D scene representation
+ideal intermediate representation for decomposing complex        in autonomous driving. Current research primarily focuses
+driving scene generation tasks. It captures both semantic and    on Semantic Occupancy Prediction (SOP). MonoScene [11]
+geometric information, facilitating the generation of diverse    introduces a 3D SOP method based on a monocular camera.
+data formats (e.g., RGB video and LiDAR) while enhancing         TPVFormer [23] presents a Tri-Perspective View framework
+the flexibility and accuracy of the generation process.          for SOP. VPD [31] utilizes a generative diffusion model
+    To this end, we propose UniScene, a unified occupancy-       for 3D SOP. In the realm of occupancy forecasting, Occ-
+centric framework designed for the versatile generation of se-   World [86] predicts future occupancy states based on prior
+mantic occupancy, video, and LiDAR data. As illustrated in       occupancy, while OccLlama [68] incorporates Large Lan-
+Fig. 1 (a), UniScene adopts a decomposed learning paradigm       guage Models (LLMs) to assist in future occupancy predic-
+and is structured hierarchically: it first generates 3D seman-   tion. However, research on occupancy generation, partic-
+tic occupancy from BEV scene layouts, and subsequently           ularly for temporal 3D occupancy sequence generation, is
+leverages this representation to facilitate the generation of    still limited. Recently, OccSora [59] employs a Diffusion
+video and LiDAR data. Specifically, in contrast to previous      Transformer (DiT) to generate occupancy, but the quality of
+unconditional occupancy generation approaches [29, 30, 39],      the generated results still lags behind the ground truth.
+we use customized BEV layout sequences as controllable in-       Generation Models in Autonomous Driving. High-quality
+puts to generate semantic occupancy sequences with spatial-      data is essential for training models in autonomous driv-
+temporal consistency. Unlike single-step layout-to-data          ing, which has led to a growing interest in driving scene
+                                                                                                          Clip
+                                                                   “A driving scene…”
+                                                                       Text Prompt
+                      …                            …                                                                       Video
+                                                                                         Noise Images                 Diffusion UNet
+                            Concat                             .
+                                                       .                                Semantic&Depth
+                                                           .                               Rendering
+    BEV Layouts                                                    Occ2Gaussian
+
+
+
+
+                           Diffusion Transformer
+                                Occupancy
+                                                                                                          LiDAR
+                                                                                                        Sparse UNet
+                                                                                                                         Prior Guided Sampling
+   Noise Volumes
+
+                          Semantic Occupancy                                                                                        Video & LiDAR
+Figure 2. Overall framework of the proposed method. The joint generation process is organized into an occupancy-centric hierarchy: I.
+Controllable Occupancy Generation. The BEV layouts are concatenated with the noise volumes before being fed into the Occupancy
+Diffusion Transformer, and decoded with the Occupancy VAE Decoder Docc . II. Occupancy-based Video and LiDAR Generation. The
+occupancy is converted into 3D Gaussians and rendered into semantic and depth maps, which are processed with additional encoders as in
+ControlNet. The output is obtained from the Video VAE Decoder Dvid . For LiDAR generation, the occupancy is processed via a sparse
+UNet and sampled with the geometric prior guidance, which is sent to the LiDAR head Dlid for generation.
+generation tasks. One line of research employs Neural Ra-                                    3.1. Controllable Semantic Occupancy Generation
+diance Fields (NeRF) and Gaussian Splatting (GS) tech-                                       Generating controllable and temporally consistent seman-
+niques [74, 75, 79, 82] to synthesize novel perspectives,                                    tic occupancy is crucial in UniScene, as subsequent video
+though these methods often suffer from limited scene diver-
+                                                                                             and LiDAR generation depend on it. To address this, we in-
+sity. With the rise of diffusion models, increasing attention
+                                                                                             troduce the Occupancy Diffusion Transformer (DiT), which
+has been given to generating driving images or videos, as                                    takes BEV layout sequences as input, allowing users to easily
+seen in works like BEVGen [55], DriveDreamer [63], Mag-                                      edit and generate the corresponding occupancy sequences.
+icDrive [15], and Panacea [70]. Some approaches also in-                                     Temporal-aware Occupancy VAE. The occupancy VAE
+tegrate world-model concepts into the generation process,                                    is designed to compress occupancy data into a latent space
+such as Drive-WM [66], WoVoGen [41], and Vista [16]. In
+                                                                                             for computational efficiency. Unlike existing VQVAE-based
+addition to generating images or videos, recent studies have
+                                                                                             approaches that rely on discrete tokenizers [68, 86], our
+explored the generation of LiDAR point clouds, including                                     method employs a VAE to encode occupancy sequences into
+LidarDiffusion [50] and LidarDM [91]. Nevertheless, these                                    a continuous latent space. It facilitates better preservation
+methods primarily focus on single-form generation, over-                                     of spatial details, particularly under high compression ratios.
+looking the complementary nature of multi-modal data. In                                     Experimental evaluations are provided in Sec.4.1 and Tab.2.
+contrast, our versatile framework generates multiple forms of
+                                                                                                 Specifically, temporal information is only considered
+high-quality data, including occupancy, video, and LiDAR.
+                                                                                             during the VAE decoding process, enabling greater flex-
+                                                                                             ibility as in [7]. In the VAE encoder, we transform the
+3. Methodology                                                                               3D occupancy O ∈ RH×W ×D into a BEV representation
+                                                                                                                  ′
+                                                                                             Ô ∈ RH×W ×DC following [86], where C ′ represents
+In this section, we present UniScene, a unified framework
+                                                                                             the dimension of the learnable class embedding. Subse-
+designed to jointly generate three data forms: semantic oc-
+                                                                                             quently, 2D convolutional layers and 2D axial attention lay-
+cupancy, multi-view video, and LiDAR point cloud.
+                                                                                             ers are used to obtain a down-sampled continuous latent
+Overview. As shown in Fig. 2, we decompose the complex                                       feature. The VAE decoder reconstructs the temporal latent
+task of driving scene generation into an occupancy-centric                                              seq
+                                                                                             feature zocc   ∈ RT ×C×h×w into an occupancy sequence
+hierarchy. Specifically, given multi-frame BEV layouts as                                       seq
+                                                                                             O ∈ R       T ×H×W ×D
+                                                                                                                      . It is built using 3D convolutional
+conditions, UniScene first generates the corresponding se-                                   layers and 3D axial attention layers to capture temporal
+mantic occupancy sequence with an Occupancy Diffusion                                        features. Similar to [86], we use cross-entropy loss LCE ,
+Transformer (Sec. 3.1). The generated occupancy then serves                                  Lovasz-softmax loss LLS , and KL divergence loss LKL to
+as conditional guidance for subsequent video and LiDAR                                       train the VAE. The total loss for the occupancy VAE is:
+generation. For video generation, the occupancy is converted
+into 3D Gaussian primitives, which are then rendered into 2D                                                     Lvae
+                                                                                                                  occ = LCE + λ1 LLS + λ2 LKL ,         (1)
+semantic and depth maps to guide the video diffusion UNet
+(Sec. 3.2). For LiDAR generation, we propose a sparse mod-                                   where λ1 and λ2 are the respective loss weights. Additional
+eling approach that combines a LiDAR sparse UNet with                                        details about the training setup for the occupancy VAE can
+a ray-based sparse sampling strategy, guided by occupancy                                    be found in the supplementary materials.
+priors, to effectively produce LiDAR points (Sec. 3.3).                                      Latent Occupancy DiT. The Latent Occupancy DiT learns
+to generate occupancy latent sequence from noise volumes
+with the condition of the BEV layout B. Specifically, the
+BEV layouts are first concatenated with the noise volumes,
+which are further patchified before being fed into the Occu-
+pancy DiT. This explicit alignment strategy helps the model
+efficiently learn spatial relationships, enabling more precise
+control over the generated sequences. The Occupancy DiT
+aggregates spatial-temporal information through a series of
+stacked spatial and temporal transformer blocks [43]. The
+loss function of Occupancy DiT is defined following [48]:
+                    " T                             #
+                      X
+                                   i              2
+          Ldit                         , Bi − ϵin
+                                           
+            occ = E          fdit zocc                ,    (2)
+                     i=1
+                                                                 Figure 3. Visualization of the Gaussian-based joint rendering.
+              i
+where fdit zocc                                          i
+                , Bi represents the model output, while zocc                        X                        i−1
+                                                                                                             Y
+                                      th          i
+                                                                                          onehot(si )αi′           1 − αj′ ),
+                                                                                                                          
+represents the input noisy latent of i frame. ϵn is the ran-        S = argmax(                                                 (4)
+dom noise sampled from N (0, I). By incorporating tempo-                            i∈N                      j=1
+ral information, our occupancy diffusion model enables the       where di denotes the depth value and α′ is determined by
+generation of long-term consistent occupancy sequences (see      the projected 2D Gaussian and the 3D opacity α as [26].
+Fig. 5 (a)). More architectural details about the Occupancy      The visualization results of the rendered semantic and depth
+VAE and DiT can be found in the supplementary.                   maps are shown in Fig. 3. Note that the road lines from
+3.2. Video: Occupancy as Conditional Guidance                    the BEV layouts are projected onto the semantic occupancy,
+                                                                 integrating the corresponding semantic information. These
+The video generation model is initialized with the pre-trained   maps are fed into an encoder branch with residual connec-
+latent generation model of Stable Video Diffusion (SVD) [6],     tions and zero convolutions, similar to ControlNet [84], to
+which is composed of a 3D video VAE and a video diffu-           leverage the pre-trained capabilities of the video diffusion
+sion UNet. As depicted in Fig. 2, the video diffusion UNet       UNet while preserving its inherent generative power.
+takes occupancy-based rendering maps and text prompts as         Geometric-aware Noise Prior. To further enhance video
+conditions to generate multi-view driving videos.                generation quality, we introduce a geometry-aware noise
+Gaussian-based Joint Rendering. The input semantic oc-           prior strategy during the sampling process. It injects a dense
+cupancy grids are jointly rendered into multi-view semantic      appearance prior, similar to previous works [14, 64], while
+and depth maps with forward Gaussian Splatting [26, 88].         also incorporating explicit geometric awareness through the
+The rendered maps bridge the representation gaps between         rendered depth map D to model regional correlations.
+the occupancy grids and the multi-view video, providing fine-
+grained semantic and geometric guidance to facilitate high-                            ϵivid = λzc + ϵin ,                      (5)
+quality and consistent video generation. Rather than relying     where ϵivid represents the noise input of ith video frame. zc
+on the resource-intensive spatial-temporal attention mecha-      denotes the latent feature corresponding to the conditional
+nisms used in previous works [15, 72] for cross-view con-        video frame, obtained by encoding the conditional video
+sistency, we retain the vanilla cross-attention from SVD [6]     frame using the 3D video VAE encoder. ϵin is random noise
+and ensure cross-view consistency through occupancy-based        sampled from N (0, I). λ is the balancing coefficient.
+multi-view conditional guidance. Additional experimental            Nevertheless, in real-world scenarios, many regions
+evaluations are provided in Fig.9 and Tab.9.                     within dynamic videos exhibit significant variations across
+    Specifically, given input semantic occupancy with the        multiple frames. The simple strategy described earlier does
+shape of RH×W ×D , we first convert it into a set of 3D          not account for correspondence modeling in these highly
+Gaussian primitives G = {Gi }N   i=1 based on the center and     dynamic regions. To address this, we leverage the rendered
+semantic label of each occupancy grid. In this way, each         depth map D to warp the appearance prior from the ref-
+Gaussian primitive contains attributes of position µ, semantic   erence image to other images using depth-based reprojec-
+label s, opacity status α, and the covariance Σ calculated       tion [10, 67], enabling explicit geometric awareness. With
+with the default rotation and voxel size scaling. Then, the      this approach, we revisit Eq. 5 and optimize it as follows:
+depth map D and the semantic map S are rendered via tile-
+based rasterization [26] similar to color rendering:                   ϵivid = λ(Warp(zc , Di , K, [R0,i | t0,i ])) + ϵin ,     (6)
+                     X              i−1
+                                    Y
+                           di αi′         1 − αj′ ,              where the depth-based Warp process [10, 67] projects the
+                                                 
+               D=                                         (3)                        T
+                     i∈N            j=1                          pixel pi = (u, v, 1) in the ith latent feature zi to its coun-
+terpart p0 in the conditional latent feature zc as:                                                        Ground Truth    w/. Ray Drop       w/o. Ray Drop
+
+       p0 = K · (R0,i · (K−1 · pi · Di (u, v)) + t0,i ). (7)                                        far
+
+                                                                                                occupied
+where K is the camera intrinsics of the latent features, scaled                                  points
+
+from the original sensor parameters. [R0,i | t0,i ] is the trans-      near
+
+form matrix from target latent zi to conditional latent zc .
+Di is the rendered depth map of ith video frame. More
+                                                                       (a) Prior guided sparse sampling     (b) Visualization of LiDAR ray-dropping effect
+details of the evaluation results can be found in Tab. 9 and
+the supplementary.                                                     Figure 4. (a) Sparse sampling with occupancy-based prior guid-
+Video Training Loss. We define the video training loss                 ance. (b) Visualization of the effect on LiDAR ray-dropping head.
+similar to previous works [6, 16], which is formulated as:                                  i−1                                n
+          " T                                                    #                          Y                                  X
+                                                                              w(si ) =            (1 − βj )βi ,           h=         w(si )si ,       (10)
+                                                             i 2
+            X
+                        i            i           i   i
+                                                      
+Lvid = E          1 − m · fvid zvid , t, zc , D , S − z0           ,                       j=1                                 i=1
+            i=1
+                                                           (8)        where Φs (x) = (1 + e−sx )−1 , h is the rendered depth value.
+            i
+where fvid zvid , t, zc , Di , Si
+                                represents the output of the           To more accurately simulate the realistic LiDAR imaging
+                                 i
+video generation model. D and Si denote the rendered                   process, we incorporate an additional reflection intensity
+depth map and semantic map of ith video frame, respec-                 head and a ray-dropping head. The reflection intensity head
+                                                   i
+tively. t represents the input text prompt. z0i , zvid are the         predicts the intensity of the object’s reflection of the Li-
+ground truth and input noisy latent, respectively. zc is the           DAR laser beam along each ray. This prediction involves a
+conditional reference frame leveraged following SVD [6].               weighted sum of the point features along the ray according to
+m is the one-hot mask used to select the condition frames.             w(s), followed by an MLP for estimation. The ray-dropping
+Note that we randomly select zc to diminish the model’s                model estimates the probability of a ray not being captured
+reliance on any specific conditioning frame.                           by the LiDAR due to the failure in detecting reflected light,
+                                                                       which is implemented with the same structure as the reflec-
+3.3. LiDAR: Occupancy-based Sparse Modeling                            tion intensity head. As shown in Fig. 4 (b), the ray-dropping
+As illustrated in Fig. 2, for LiDAR generation, the input              head effectively eliminates noise points in the predictions.
+occupancy is first encoded into sparse voxel features with a           The training loss for LiDAR generation is composed of depth
+Sparse UNet [53], which are then used to produce LiDAR                 loss Ldepth , intensity loss Linten and ray-dropping loss Ldrop :
+points via sparse sampling guided by occupancy priors.                              Llid = Ldepth + λ1 Linten + λ2 Ldrop ,        (11)
+Prior Guided Sparse Modeling. Given the inherent sparsity
+and detailed geometry of semantic occupancy, we propose a              where λ1 , λ2 are balancing coefficients. More details includ-
+prior-guided sparse modeling approach to enhance computa-              ing the training setup are provided in the supplementary.
+tional efficiency (see the last column of Tab.5), by avoiding
+unnecessary computations on unoccupied voxels. The input               4. Experiments
+semantic occupancy grids are first processed using a Sparse            Our experiments are conducted on the challenging NuScenes
+UNet[53] to aggregate contextual features. Next, we perform            benchmark [9]. We interpolate the semantic occupancy la-
+uniform sampling along the LiDAR rays, denoted as r, to                bels from the 2Hz key-frame annotations of the NuScenes-
+generate a sequence of points, represented as s.                       Occupancy dataset [62] to a higher frame rate of 12Hz, sim-
+    As shown in Fig. 4 (a), to facilitate prior-guided sparse          ilar to previous studies [15, 61, 85]. For additional details,
+sampling, we assign a probability of 1 to points within occu-          including dataset specifics, evaluation metrics, comparison
+pied voxels and 0 to all other points, thus defining a probabil-       baselines, model configurations, and further visualizations,
+ity distribution function (PDF). Subsequently, we resample             please refer to the supplementary materials.
+n points {ri = o + si v (i = 1, ..., n)} based on the PDF.
+Here o is the ray origin and v is the normalized ray direction.        4.1. Main Results
+LiDAR Head and Training Loss. Following the ray-based
+                                                                       Versatile Generation Ability. As shown in Fig. 5, the pro-
+volume rendering techniques from previous works [3, 60,
+                                                                       posed UniScene facilitates versatile and controllable gener-
+81], the features of each resampled point are processed
+                                                                       ation. For large-scale coherent generation, UniScene first
+through a multi-layer perceptron (MLP) to predict the signed
+                                                                       produces long-term semantic occupancy from the given BEV
+distance function (SDF) f (s) and to compute the associated
+                                                                       layouts, which subsequently guides the generation of LiDAR
+weights w(s). These predictions and weights are then used
+                                                                       point clouds and multi-view videos (Fig. 5(a)). Regarding
+to estimate the depth of the ray via volume rendering:
+                                                                       controllable geometry editing, users can easily edit the BEV
+                   Φs (f (r(si ))) − Φs (f (r(si+1 )))                 layouts, such as by removing cars (Fig. 5(b)), and the gen-
+      βi = max(                                        , 0),   (9)     eration results can change accordingly. Furthermore, as
+                             Φs (f (r(si )))
+Figure 5. Versatile generation ability of UniScene. (a) Large-scale coherent generation of semantic occupancy, LiDAR point clouds, and
+multi-view videos. (b) Controllable generation of geometry-edited occupancy, video, and LiDAR by simply editing the input BEV layouts to
+convey user commands. (c) Controllable generation of attribute-diverse videos by changing the input text prompts.
+
+                             Compression                                 Method               Multi-view    Video       FID ↓     FVD ↓
+  Method                                 ↑     mIoU ↑    IoU ↑
+                               Ratio
+                                                                         BEVGen [55]                                    25.54        -
+  OccLLama (VQVAE) [68]            8             75.2     63.8           BEVControl [80]                                24.85        -
+  OccWorld (VQVAE) [86]           16             65.7     62.2           DriveGAN [27]                                  73.40     502.30
+  OccSora (VQVAE) [59]            512            27.4     37.0           DriveDreamer [85]                              52.60     452.00
+                                                                         Vista [16]                                      6.90      89.40
+  Ours (VAE)                      32             92.1     87.0
+  Ours (VAE)                      512            72.9     64.1           WoVoGen [41]                                   27.60     417.70
+                                                                         Panacea [70]                                   16.96     139.00
+Table 2. Occupancy Reconstruction. The compression ratio is              MagicDrive [15]                                16.20       -
+calculated following the methodology outlined in OccWorld [86].          Drive-WM [66]                                  15.80     122.70
+The top two performers are highlighted in bold and underlined.           Vista ∗ [16]                                   13.97     112.65
+                                                                         Ours (Gen Occ)                                 6.45       71.94
+   Method            CFG       mIoU ↑        F3D ↓      MMD ↓            Ours (GT Occ)                                  6.12       70.52
+                       4        20.51        205.78     11.60          Table 4. Video Generation. We implement the multi-view variant
+   Ours-Gen.           1        19.44        158.55     10.60
+                                                                       of Vista∗ [16] with spatial-temporal attention [15, 72].
+   OccWorld [86]       -        17.13        145.65      9.89
+   Ours-Fore.          -        31.76         43.13      2.86             Method             MMD (10−4 )↓           JSD ↓       Time (s)↓
+Table 3. Occupancy Generation and Forecasting. ‘Ours-Gen.’                LiDARDM [91]             3.51             0.118        45.12
+and ‘Ours-Fore.’ denote our Generation model and Forecasting              Open3D [89]              8.15             0.149         2.39
+model, respectively. ‘CFG’ refers to the Classifier-Free Guidance.        Ours (Gen Occ)           2.40             0.108         0.47
+                                                                          Ours (GT Occ)            1.53             0.072         0.25
+depicted in Fig. 5(c), for attribute customization, UniScene
+                                                                       Table 5. LiDAR Generation. We include the semantic occupancy
+allows for varied weather and lighting conditions in the               generation time for a fair comparison.
+generated videos through user-specified text prompts (e.g.,
+specifying weather or time of day).                                      To further evaluate the effectiveness of our occupancy
+Occupancy Reconstruction, Generation and Forecasting.                 generation model, we implement a forecasting variant of our
+The evaluation of occupancy is on the NuScenes-Occupancy              model as previous forecasting works [86] for comparison.
+key-frame (2Hz) validation set. Since precisely reconstruct-          Please refer to the supplementary for forecasting adaption
+ing the occupancy is vital for occupancy generation, we first         details. The quantitative evaluation for occupancy generation
+compare our Occupancy VAE with the existing methods on                (‘Ours-Gen.’) and forecasting (‘Ours-Fore.’) is shown in
+reconstruction accuracy in Tab. 2. Compared to the discrete           Tab. 3. Even with fewer reference occupancy frames (‘Ours-
+compression with VQVAE in previous works [59, 68, 86],                Fore.’: 2, OccWorld: 5), ‘Ours-Fore’ surpasses OccWorld
+our continuous compression with VAE achieves remarkable               by 70.39% in F3D and 71.08% in MMD, respectively. The
+reconstruction performance even under the high compres-               qualitative results of occupancy forecasting are shown in
+sion ratio of 512, surpassing OccWorld [86] by 10.96% in              Fig. 6. Our method can handle dynamic objects and sharp
+mIoU. Note that the compression ratio of 512 is employed              steering maneuvers compellingly in the generating process.
+as the default setting in our model to ensure efficiency.             Video Generation Results. The quantitative comparison of
+Figure 6. Qualitative evaluation for occupancy forecasting. Our
+method can compellingly handle sharp steering maneuvers and
+dynamic objects with temporal consistency.                        Figure 7. Qualitative evaluation for video generation. Our method
+                                                                  excels in object structure quality and cross-view consistency.
+video generation is illustrated in Tab. 4. The ‘Gen Occ’ and
+‘GT Occ’ represent the occupancy conditions generated from
+ our framework and ground truth, respectively. Our method
+ supports multi-view video generation and outperforms all
+ the other methods, achieving 71.94 FVD with generated
+ occupancy and 70.52 FVD with ground truth occupancy,
+ respectively. Note that the competitive method of Vista [16]
+ only supports single-view video generation, here we imple-
+ ment the multi-view variant with spatial-temporal attention
+ following [15, 72] for a fair comparison.                        Figure 8. Qualitative evaluation for LiDAR generation. Our
+     As shown in Fig. 7, we compare our video generation          method generates precious scene layouts and clear object details.
+ results with the video generation model of MagicDrive [15].
+ Our approach demonstrates an obvious improvement in              ing works [15, 55] that only produce augmented images,
+video generation quality, particularly in the structure quality   we generate different data forms to enable the training of
+ of objects and cross-view consistency. The notable enhance-      comprehensive downstream multi-modal perception mod-
+ ment is attributed to the conditional guidance derived from      els. For the Occupancy Prediction task in Tab. 6, UniScene
+ occupancy-based semantic and geometric rendering maps.           significantly improves the baseline of CONet [62] in differ-
+ LiDAR Generation Results. We compare our LiDAR gen-              ent modality settings (e.g., Camera (C), LiDAR (L), Cam-
+ eration model with Open3D [89] and LiDARDM [91] on               era+LiDAR (C&L) ), which stems from the high fidelity gen-
+ the NuScenes validation set. For Open3D, we utilize the li-      eration with precious occupancy-based conditional guidance
+ brary’s hard ray-casting function to convert the ground truth    of fine-grained geometry and semantics. For the BEV Seg-
+ occupancy grids into corresponding LiDAR point clouds.           mentation and Object Detection tasks in Tab. 7, we employ
+ LiDARDM is implemented using the official repository and         CVT [87]) and BEVFusion [40] as baselines following [15].
+ trained with the same setting as our model on NuScenes. The      Our method significantly surpasses other methods for data
+‘Gen Occ’ and ‘GT Occ’ are the same as the video generation       augmentation, highlighting the superior generation quality.
+ evaluation. As shown in Tab. 5, our method achieves the best
+                                                                  4.2. Ablation Studies
+ generation performance, surpassing LiDARDM by 31.62%
+ in MMD. Moreover, our approach demonstrates significant          Effect of Designs in Occupancy Generation Model. We
+ advantages in inference speed over other methods, which          conduct extensive ablation studies to validate the effective-
+ stem from our efficient sparse modeling scheme. The qual-        ness of the occupancy generation model components, as
+ itative results are shown in Fig. 8. Compared to LiDARM          shown in Tab. 8. Incorporating temporal information in the
+ and Open3D, our method shows significant superiority in          occupancy VAE decoder with 3D axial attention boosts oc-
+ generating precious scene layouts and clear object details.      cupancy sequence generation fidelity, particularly reducing
+ Downstream Task Evaluation. UniScene can produce                 the MMD metric by 38.01%. The temporal attention layer in
+ multi-modal augmented data with corresponding annota-            Occupancy DiT effectively improves the generation results,
+ tions, thereby enhancing training for downstream percep-         boosting the F3D metric by 10.29%. The spatial attention
+ tion tasks. We augment an equal quantity of images and           layer in Occupancy DiT brings significant enhancement in
+ LiDAR point clouds as in the original NuScenes dataset,          generation fidelity, reducing the F3D metric by 39.26%.
+ ensuring consistent training iterations and batch sizes for      Effect of Designs in Video Generation Model. As shown
+ fair comparisons as previous works [15, 55]. Unlike exist-       in Tab. 9 and Fig. 9, we conduct extensive ablation studies to
+    Method                             Input           IoU ↑               mIoU ↑             Method                                mIoU ↑           F3D ↓     MMD ↓
+
+    MonoScene [11]                      C               18.4                 6.9              Ours                                  19.44            158.55     10.60
+    TPVFormer [23]                      C               15.3                 7.8              w/o. VAE 3D Axial Attention           18.77            167.91     17.10
+    Baseline-C [62]                     C               20.1                12.8              w/o. DiT Temporal Attention           17.63            176.74     11.35
+    w/. Vista∗ [16]                     C              20.8+0.7            13.1+0.3           w/o. DiT Spatial Attention            10.29            261.03     18.59
+    w/. MigicDrive [15]                 C              21.8+1.7            13.9+1.1
+    w/. Ours-C                          C              28.6+8.5            16.5+3.7        Table 8. Ablation for designs in the occupancy generation model.
+    LMSCNet [51]                        L               27.3                11.5
+                                                                                                   Method                                    FID↓             FVD↓
+    JS3C-Net [78]                       L               30.2                12.5
+    Baseline-L [62]                     L               30.9                15.8                   Ours                                      6.12             70.52
+    w/. Ours-L                          L              33.1+2.2            19.3+3.5
+                                                                                                   w/. Spatial-temporal Attention            12.72            110.87
+    3DSketch [13]                 C&LD                  25.6                10.7                   w/o. Rendered Semantic Map                11.72            107.92
+    AICNet [32]                   C&LD                  23.8                10.6                   w/o. Rendered Depth Map                   10.17            102.42
+    Baseline-M [62]               C&L                   29.5                20.1                   w/o. Depth-based Noise Prior              7.23             87.52
+    w/. Ours-M                    C&L                  35.4+5.9            23.9+3.8
+                                                                                             Table 9. Ablation for designs in the video generation model.
+Table 6. Comparison about training support for semantic occu-
+pancy prediction (Baseline as CONet [62]). The “C”, “L”, and                                Method                     MMD (10−4 ) ↓ JSD ↓ Time (s)↓ Memory (GB)↓
+“LD ” denote the camera, LiDAR, and depth projected from LiDAR.                             Ours                             1.53      0.072        0.25       6.84
+                                                                                            w/o. Sparse UNet                 2.88      0.097        0.21        6.73
+                                   BEV Segmentation     3D Object Detection                 w/o. Sparse Sampling             1.69      0.075        0.30       16.66
+Method                Input
+                              Road mIoU ↑ Vehicle mIoU ↑ mAP ↑ NDS ↑                        w/o. Ray-dropping Head           3.25      0.100        0.25        5.05
+Baseline [40, 87]      C         74.30           36.00              32.88      37.81
+w/. BEVGen [55]        C       71.90-2.40      36.60+0.60             -          -
+                                                                                           Table 10. Ablation for designs in the LiDAR generation model.
+w/. Vista∗ [16]        C       76.62+2.32      37.71+1.71         34.04+1.16 38.60+0.79
+w/. MagicDrive [15]    C       79.56+5.26      40.34+4.34         35.40+2.52 39.76 +1.95
+w/. Ours               C       81.69+7.39      41.62+5.62         36.50+3.62 41.22+3.41
+Baseline-M [40]       C&L          -               -                65.40      69.59
+w/. Ours-M            C&L          -               -              68.53+3.13 72.20+2.61
+
+Table 7. Comparison about training support for BEV segmen-
+tation (Baseline as CVT [87]) and 3D object detection (Baseline
+as BEVFusion [40]).
+
+validate the effectiveness of the video generation model com-                              Figure 9. Visualization of the effect of occupancy-based condi-
+ponents. For the setting of ‘w/. Spatial-temporal Attention’,                              tional guidance. Our approach significantly enhances cross-view
+we remove the occupancy-based rendering maps and employ                                    consistency, resulting in high-fidelity structures, while spatial-
+spatial-temporal attention as [15, 72]. Our results indicate                               temporal attention fails to achieve similar results.
+that the occupancy-based semantic and geometric rendering
+                                                                                           MMD and JSD by 25.92% and 25.00%, respectively. We
+maps are more effective in enhancing video generation qual-
+                                                                                           attribute such obvious improvement to the capability of real-
+ity. Moreover, as illustrated in Fig. 9, our strategy markedly
+                                                                                           istic LiDAR ray-dropping phenomenon simulation.
+improves the cross-view consistency with high-fidelity struc-
+tures. The rendered semantic and depth maps from the se-                                   5. Conclusion and Future Work
+mantic occupancy benefit the fidelity of image and video
+generation significantly with detailed prior guidance, boost-                              In this paper, we introduce UniScene, a unified framework
+ing 34.66% and 31.15% in terms of FVD, respectively. The                                   designed to generate high-fidelity, controllable, and anno-
+geometric-aware noise prior improves the video generation                                  tated data for autonomous driving applications. By decom-
+performance obviously, reducing FVD from 87.52 to 70.52.                                   posing the complex scene generation task into two hier-
+Effect of Designs in LiDAR Generation Model. The abla-                                     archical steps, UniScene progressively produces semantic
+tion studies on the proposed LiDAR generation model are                                    occupancy, video, and LiDAR data. Extensive experiments
+illustrated in Tab. 10. For the setting of ‘w/o. Sparse UNet’,                             show that UniScene surpasses current SOTAs in all three
+we replace the Sparse UNet with a single layer of subman-                                  data types and enhances extensive downstream tasks.
+ifold convolution [17]. As we can see, the Sparse UNet                                     Limitations and Future Work. Unifying a comprehensive
+efficiently improves the generation performance (-25.77%                                   system that integrates multiple generation tasks is challeng-
+in JSD) with a relatively small memory increment (+1.63%).                                 ing and resource-intensive. Exploring methods to optimize
+To implement the setting of ‘w/o. Sparse Sampling’, we                                     the system for lightweight deployment is a promising avenue
+replace it with uniform sampling following NeuS [60]. Our                                  for future research. Additionally, extending the system to
+sparse sampling strategy brings a significant computational                                relevant domains such as embodied intelligence and robotics
+consumption decrease (-58.94%) with better performance                                     presents valuable opportunities for further advancement.
+(-4.00% in JSD). Moreover, the ray-dropping head reduces
+                                  Supplementary Material for UniScene
+
+
+A. Problem Definition and Distinctiveness                         unsatisfactory generation quality. Moreover, it lacks the
+                                                                  capability of precisely controlling the generated results. To
+A.1. Controllable Occupancy Generation                            address the issues in these works, we propose our occupancy
+Previous research on uncontrollable occupancy genera-             generation model, enabling controllable generation of
+tion [29, 30, 39] has primarily focused on the creation of        temporal 3D scene sequences with high fidelity while
+static scenes, which limits their applicability to dynamic        effectively maintaining temporal consistency.
+scenarios due to a lack of controllability. In contrast, our
+approach introduces controllable generation P(Occ|BEV),
+                                                                  B.2. Driving Video Generation
+effectively incorporating temporal information into the           Vista [16] builds on the architecture of Stable Video
+process. Here BEV refers to input Bird’s Eye View (BEV)           Diffusion (SVD) [6] to enable single-view driving video gen-
+scene layouts and Occ denotes the corresponding generated         eration with various action controls. However, this method
+semantic occupancy, respectively.                                 is constrained by its inability to produce multi-view videos
+                                                                  and its lack of alignment between the generated outputs
+A.2. Conditional Video and LiDAR Generation                       and ground-truth labels, which hinders its utility for training
+Existing methods for video [15, 63, 66, 71, 85] and Li-           downstream tasks. WoVoGen [41] presents a world model
+DAR [50, 90, 91] generation typically produce data directly       that predicts future videos and occupancy based on past
+from coarse scene layouts (e.g., BEV maps, 3D bounding            observations. In this model, occupancy grids are compressed
+boxes). However, these approaches often fail to accurately        into low-dimensional features [49], potentially leading
+capture the intricate distributions inherent in driving scenes,   to suboptimal generation results (see the seventh row of
+leading to suboptimal performance. In contrast, our pro-          Table 4 in the main paper). Recent work of SyntheOcc [33]
+posed UniScene framework addresses these limitations by           synthesizes multi-view images in driving scenarios using
+decomposing the complex generation task into a hierarchy          occupancy-based multi-plane semantic images. Neverthe-
+centered around occupancy. This is formally expressed as:         less, this method neglects the explicit geometric information
+                                                                  within the semantic occupancy grids and necessitates
+P(Vid, Lid|BEV) = P(Vid, Lid|Occ) · P(Occ|BEV),                   substantial manual intervention for occupancy grid editing.
+                                                        (12)      Our proposed UniScene aims to jointly render semantic and
+where Vid, and Lid denote the generated video, and Li-            depth maps from the semantic occupancy, thereby providing
+DAR data, respectively. By leveraging occupancy priors,           detailed prior information. Moreover, UniScene simplifies
+our method alleviates the learning burden and more accu-          geometric editing by using BEV maps as scene layouts.
+rately captures the underlying distributions for performance
+enhancement, as demonstrated in Fig. 1(a) of the main paper.      B.3. LiDAR Point Cloud Generation
+                                                                  Pioneering works in LiDAR generation [18, 50, 76, 77, 90,
+B. More Related Works and Discussions                             91] utilized GAN or diffusion models to produce LiDAR
+                                                                  point clouds. LiDARGen [90] adopts an equirectangular
+B.1. Semantic Occupancy Generation                                view image as a structured representation of LiDAR point
+SemCity [30] proposes a 3D semantic scene generation              clouds and uses a score-based diffusion model for point
+approach with a triplane diffusion framework. Pyrami-             cloud generation. Nevertheless, the 2.5D representation may
+dOcc [39] generates large-scale 3D semantic scenes using a        constrain its capacity to accurately generate 3D geometries
+coarse-to-fine paradigm with pyramid discrete diffusion [1].      of real-world objects. Furthermore, LiDARGen [90] applies
+These methods mainly focus on unconditional and static            the diffusion process directly to LiDAR points rather than
+3D scene generation. More recent work [83] is capable of          in the latent space, significantly slowing down the inference
+controlling the generation of 3D scenes through BEV maps.         process. UltraLiDAR [77] voxelized LiDAR points and
+However, it remains confined to static scenes. OccSora [59]       transformed them into a BEV representation, employing
+generates temporal 3D scene sequences with a diffusion            VQVAE to learn a compact 3D representation of LiDAR
+transformer (DiT) [48]. Due to the high compression ratio         points and a generative transformer for LiDAR points
+of occupancy in its designed VQVAE, the reconstruction            generation. However, using BEV as the representation
+performance is suboptimal, which to some extent leads to          overlooks the fine geometric details in the LiDAR data,
+                                                                                                     Compression
+                                                                          Method                                 ↑    mIoU ↑     IoU ↑
+                                                                                                       Ratio
+                                                                          OccLLama (VQVAE) [68]            8           75.2       63.8
+                                                                          OccWorld (VQVAE) [86]           16           65.7       62.2
+                                                                          OccSora (VQVAE) [59]            512          27.4       37.0
+                                                                          Ours(VQVAE)                     32           59.8       58.2
+                                                                          Ours (VAE)                      32           92.1       87.0
+                                                                          Ours(VQVAE)                     512          55.8       56.8
+                                                                          Ours (VAE)                      512          72.9       64.1
+
+                                                                        Table 11. Comparison of VQVAE and VAE performance on oc-
+                                                                        cupancy reconstruction, with compression ratios calculated based
+Figure 10. The architecture of the occupancy generation model,          on the methodology from OccWorld [86]. The results demonstrate
+which consists of two main components: the Occupancy VAE and            the clear superiority of our occupancy VAE over VQVAE under
+the Occupancy DiT. The Occupancy VAE includes a 2D encoder,             the same architectural design, achieving significantly higher mIoU
+leveraging ResBlock, 2D CNNs, and axial attention, and a 3D             and IoU scores across various compression ratios.
+decoder to reconstruct the input data. The Occupancy DiT applies a
+denoising diffusion process using temporal and spatial self-attention
+blocks to generate denoised latent representations. Noisy latents,
+combined with BEV layout sequences, are processed to create             C.2. Occupancy Generation Model
+unified patchified outputs, enabling robust occupancy generation.
+                                                                        As illustrated in Fig. 10, the occupancy generation model
+                                                                        is composed of a VAE and a DiT, which produces semantic
+                                                                        occupancy with a compressed latent space.
+potentially impacting the generation quality. LiDM [18]                 Occupancy VAE. We leverage the Occupancy VAE encoder
+employs range maps as the representation for LiDAR data,                to transform a 3D semantic occupancy O ∈ RH×W ×D
+integrating curve-wise compression, patch-wise encoding,                within an occupancy sequence into a BEV representation
+                                                                                           ′
+and point-wise coordinate supervision in VQVAE to enhance               Ô ∈ RH×W ×DC by assigning each category a learnable
+its geometric representation capabilities. However, the use             class embedding C ′ . A 2D CNN encoder with a 2D axial
+of range map representation can result in a loss of structured          attention layer is utilized to extract a continuous latent fea-
+LiDAR point information. In this work, we propose to                    ture with down-sampled resolution Zocc ∈ RC×h×w , where
+facilitate high-fidelity LiDAR point generation by leveraging           h= H               W
+                                                                               d and w = d , with d being the down-sampling factor.
+fine-grained priors from semantic occupancy grids.                          The VAE decoder reconstructs the latent feature sequence
+                                                                        zseq
+                                                                          occ ∈ R
+                                                                                  T ×C×h×w
+                                                                                             . A 3D CNN network with a 3D axial
+                                                                        attention layer is employed to up-sample the latent feature
+C. More Implementation Details                                          sequence to a BEV representation occupancy sequence
+                                                                                                  ′
+                                                                        Ôseq ∈ RT ×H×W ×DC . This sequence is then reshaped
+C.1. BEV Editing Scheme                                                 to R  T HW ×D×C ′
+                                                                                           and processed through a dot product with
+                                                                        the class embeddings to obtain the logits scores. During
+The modification of BEV layouts for the controllable
+                                                                        training, the logits scores and one-hot labels are used
+generation of semantic occupancy, videos, and LiDAR point
+                                                                        to compute the cross-entropy loss and Lovász-softmax
+clouds represents a significant application in the creation
+                                                                        loss [4]. In the inference phase, the final reconstructed
+of out-of-distribution (OOD) data. To accomplish this, our
+                                                                        occupancy sequence Oseq ∈ RT ×H×W ×D is determined
+editing scheme is structured as follows:
+                                                                        by taking the argmax of the logits. We provide more
+• Modify the initial BEV layout, Bori , to produce a revised            occupancy reconstruction results in Tab. 11 to illustrate the
+  layout, Bnew , incorporating specific alterations (e.g., the          superiority of our occupancy VAE design with continuous
+  removal of a vehicle).                                                compression. The results demonstrate the clear superiority
+• Employ DDIM Inversion [45] to transform the original oc-              of our occupancy VAE over VQVAE under the same
+  cupancy, Oori , into a noise latent, ϵori , while being guided        architectural design, which achieves significantly higher
+  by the original BEV layout, Bori .                                    mIoU and IoU scores across various compression ratios.
+• Construct the updated occupancy, Onew , via denoising                 Occupancy DiT. As shown in Fig. 10, we employ an
+  diffusion, utilizing the modified BEV layout, Bnew , as a             Occupancy DiT to denoise occupancy latent sequence
+  conditioning factor and ϵori as the starting noise.                   features from noisy occupancy latents and BEV layout
+• With the newly generated occupancy, Onew , serve as the ad-           sequences. To align the BEV layout sequence with the
+  dition condition, produce the corresponding video, Vnew ,             occupancy latent features, we introduce a unified patchify
+  and LiDAR data, Lnew , with detailed prior guidance.                  module. Specifically, the BEV layout at time step i is
+                                                                        down-sampled into Bidown ∈ R(Cb )×h×w to match the
+             Occupancy DiT F3D vs FLOPs                                 Occupancy DiT mIoU vs FLOPs
+      180
+                                                              24                                                       occupancy generation model is adapted into a generative
+      175
+                                                              22                                                       forecasting model, which predicts Tf future frames based
+                                                              20
+      170                                                                                                              on Tc conditional frames. Specifically, during the training
+
+
+
+
+                                                   mIoU (%)
+                                                              18
+F3D
+
+
+
+
+      165
+                                                              16                                                       phase, the conditional occupancy latent frames are concate-
+      160
+                                                              14
+      155                                                     12
+                                                                                                                       nated directly with the BEV layouts without the addition of
+      150                                                     10                                                       noise. The unified latent tokens for both Tc and Tf frames
+            10   20     40      80     160   320                   10       20     40        80        160       320
+                        FLOPs (G)                                                  FLOPs (G)                           are then fed into the DiT backbone, following the same
+                                                                                                                       procedure as in the generation model. The model outputs
+Figure 11. Scalability analysis of Occupancy DiT, illustrating how                                                     denoised occupancy latent frames for both Tc and Tf frames,
+performance scales with increasing computational cost (FLOPs).                                                         while the loss is computed only on the Tf frames. In the in-
+The left plot shows a consistent improvement in F3D performance
+                                                                                                                       ference phase, the Tf frames are initialized with pure noise,
+as FLOPs increase, while the right plot highlights the scalability
+                                                                                                                       while the Tc frames are initialized with conditional occu-
+of mIoU, which also improves steadily with higher computational
+resources, demonstrating the model’s capacity to leverage increased                                                    pancy latents sampled from the Occupancy VAE. The future
+computation for better results.                                                                                        occupancy frame number Tf is set to 6 to align with previous
+                                                                                                                       works [68, 86]. To improve computational efficiency and
+                                       mIoU ↑                                            IoU ↑
+                                                                                                                       reduce dependence on the conditional frames, we set Tc = 1
+             Method           1s      2s      3s               Avg           1s         2s        3s         Avg
+                                                                                                                       or Tc = 2 instead of Tc = 5 in previous works [68, 86].
+      OccWorld [86]          25.75   15.14   10.51            17.13        34.63   25.07      20.19          26.63
+                                                                                                                       The results of the forecasting model are presented in Tab. 12.
+      OccLLama [68]          25.05   19.49   15.26            19.93        34.56   25.83      24.41          29.17     As we can see from the table, our method effectively sur-
+  Ours-Fore. (1 ref)         30.93   24.87   20.75            27.33        35.15   31.79      29.24          31.62     passes other works across different time horizons (1s, 2s, 3s),
+  Ours-Fore. (2 ref)         35.37   29.59   25.08            31.76        38.34   32.70      29.09          34.84
+                                                                                                                       demonstrating the effectiveness of our approach in generat-
+                                                                                                                       ing accurate and consistent occupancy generation. Moreover,
+Table 12. Comparison of occupancy forecasting performance,
+                                                                                                                       we visualize the scalability of the Occupancy DiT in Fig. 11
+where Ours-Fore. (1 ref) and Ours-Fore. (2 ref) represent our
+forecasting model conditioned on 1 and 2 reference occupancy
+                                                                                                                       to demonstrate the potential of our proposed method. The
+frames, respectively. The results highlight significant improve-                                                       performance improves steadily with higher computational re-
+ments in both the mIoU and IoU metrics over baseline methods                                                           sources, which demonstrates the model’s capacity to leverage
+(OccWorld and OccLLama) across different time horizons (1s, 2s,                                                        increased computation for better results as discussed in [47].
+3s), demonstrating the effectiveness of our approach in generating
+accurate and consistent occupancy predictions.
+                                                                                                                       C.3. Video Generation Model
+                                                                                                                       As shown in Fig. 12, the video generation model combines
+                                                                                                                       video latent representations with occupancy grids and textual
+shape of the latent feature and then concatenated with
+                                                                                                                       prompts to guide video generation. The VAE encoder ex-
+the latent Ziocc ∈ R(Co )×h×w . A unified patch embedder
+                                                                                                                       tracts video latent features, which are combined with noise
+transforms the concatenated latent Zcat ∈ R(Co +Cb )×h×w
+                                                                                                                       before passing through the Diffusion UNet.
+into unified latent tokens Z ∈ RL×Ed , where L is the
+number of patches and Ed is the embedding dimension.                                                                   Preliminaries with Stable Video Diffusion. The Stable
+   The backbone of Occupancy DiT is the Spatial-Temporal                                                               Video Diffusion (SVD) [6] is a latent diffusion model specif-
+Latent Diffusion Transformer, comprising stacked spatial                                                               ically designed for image-to-video (I2V) generation. To
+and temporal blocks. Spatial blocks aggregate features                                                                 increase sampling flexibility, SVD utilizes a continuous-
+across different positions within the same latent, whereas                                                             timestep formulation. The model converts data samples x
+temporal blocks capture features across different latent                                                               into noise n through a diffusion process, where p(n|x) fol-
+frames at the same position. Additionally, 2D positional                                                               lows a Gaussian distribution N (x, σ 2 I). New samples are
+embeddings and 1D temporal embeddings are used to ac-                                                                  then generated by gradual denoising the latent space from
+count for relative relationships. The output of the backbone,                                                          Gaussian noise until σ0 = 0. SVD generates videos by
+with dimensions RT ×L×Ed , is passed through an unpatchify                                                             processing a series of noisy latent representations, with the
+layer to yield a denoised occupancy latent sequence of size                                                            generation being guided by a conditional image. The latent
+RT ×H×W ×D . During the training phase, we randomly drop                                                               representation of this image is channel-wise concatenated to
+the BEV layout condition with a probability of 0.1, enabling                                                           the input, acting as a reference for the content creation.
+the diffusion model to learn unconditional generation, which                                                           Preliminaries with Gaussian Splatting. The Gaussian
+is essential for occupancy editing. In the sampling phase,                                                             Splatting [25] approach defines a set of 3D Gaussian prim-
+the classifier-free guidance scale is set to 1.0 by default.                                                           itives as G = {Gi }N i=1 , where each primitive Gi contains
+Occupancy Forecasting Variant. To facilitate compari-                                                                  attributes of position µi , color ci , opacity αi , rotation ma-
+son with other occupancy forecasting works [68, 86], the                                                               trix Ri , and scale matrix Si . The associated 3D covariance
+Figure 12. The architecture of the video generation model, which
+combines video latent representations with textual prompts to guide
+                                                                        Figure 13. The architecture of the LiDAR generation model, which
+video generation. The VAE encoder extracts video latent features,
+                                                                        integrates a LiDAR Sparse UNet and a Prior Guided Sampling
+which are combined with noise before passing through the Diffu-
+                                                                        mechanism. The LiDAR Sparse UNet processes input occupancy
+sion UNet. The Diffusion UNet employs cross-attention mecha-
+                                                                        data to extract spatial features, while the Prior Guided Sampling
+nisms to integrate textual guidance and refine the latent representa-
+                                                                        generates LiDAR points by sampling along rays based on the spatial
+tion. Occupancy grids serve as the basis for generating depth maps
+                                                                        structure. The LiDAR Head employs weighted summation and
+and semantic maps, which act as guidance for the video generation
+                                                                        MLP modules to calculate the intensity, ray drop probabilities,
+process. The VAE decoder reconstructs the video from the denoised
+                                                                        and final positions of the LiDAR points. The process involves
+latent, producing realistic outputs guided by the input prompts.
+                                                                        assigning weights to the generated LiDAR point features, refining
+                                                                        them through an MLP, and aggregating the results to produce high-
+                                                                        quality LiDAR outputs with realistic point distributions.
+matrix Σi for each primitive is derived as:
+
+                       Σi = Ri Si ST  T
+                                   i Ri ,                      (13)     of the corresponding occupancy grid cell, its scale is set ac-
+                                                                        cording to the size of the grid cell, and its semantic attribute
+when transformed by a viewing transformation W, the co-
+                                       ′                                is initialized with the semantic label of the grid cell. To im-
+variance matrix in camera coordinates Σi is computed as:
+                                                                        prove the effectiveness of the 2D conditions, we render depth
+                       ′                                                and semantic maps that align with the camera’s viewpoint.
+                     Σi = JWΣi WT JT ,                         (14)     Specifically, given the semantic label si and depth value di ,
+where J is the Jacobian of the affine approximation of the              the depth map D and the semantic map S are rendered in a
+projective transformation. This process yields a 2 × 2 covari-          manner analogous to the color rendering:
+ance matrix, consistent with the previous work [25]. For a                                                   i−1
+given projected 3D Gaussian center µ ∈ R2×1 and a point                                       X              Y
+                                                                                                    di αi′         1 − αj′ ,
+                                                                                                                          
+                                                                                        D=                                              (17)
+x ∈ R2×1 in camera coordinates, the opacity α′ of projected                                                  j=1
+                                                                                              i∈N
+2D Gaussian is formulated as:                                                                                        i−1
+                                                                                           X                         Y
+                                                                                                 onehot(si )αi′            1 − αj′ ).
+                                                                                                                                  
+                 
+                    1
+                                                                          S = argmax(                                                  (18)
+      ′                        T    ′ −1
+    α = α exp − (x − µ) (Σ ) (x − µ) .                   (15)                              i∈N                       j=1
+                    2
+                                                                            As discussed in Section 3.2 of the main paper, we incor-
+   The accumulated color map C is obtained via tile-based               porate an encoder branch inspired by ControlNet [84] to con-
+rasterization:                                                          dition the rendering maps. The specifics of this conditioning
+                                      i−1
+                                                                        are depicted in Fig. 12. The encoder branch consists of two
+                                                                        modules, each designed for either depth map conditioning or
+                        X             Y
+                             ci αi′         1 − αj′ .
+                                                   
+                 C=                                            (16)
+                       i∈N            j=1
+                                                                        semantic map conditioning, with similar architectures. Each
+                                                                        conditioning module comprises two ResNet blocks followed
+Gaussian-based Joint Rendering. In this work, to generate               by a zero convolution, as recommended by ControlNet [84],
+depth and semantic maps, we start by transforming an input              to preserve the original functionality of the diffusion model.
+semantic occupancy grid, with dimensions RH×W ×D , into
+a set of 3D Gaussian primitives G. Each primitive Gi is
+                                                                        C.4. LiDAR Generation Model
+assigned an additional attribute: the semantic label si . The           As illustrated in Fig. 13, the LiDAR generation model com-
+position of each 3D Gaussian is initialized using the center            prises a LiDAR Sparse UNet and a Prior Guided Sampling
+mechanism. The LiDAR Sparse UNet processes input oc-               convert the mesh vertices, along with their semantic labels,
+cupancy data to extract spatial features, whereas the Prior        into semantic occupancy data.
+Guided Sampling mechanism generates LiDAR points by
+sampling along rays according to the spatial structure. The        E. Evaluation Metrics
+LiDAR Head utilizes weighted summation and multilayer
+perceptron (MLP) modules to compute the intensity, ray             To evaluate the fidelity of occupancy generation, we adopt
+drop probabilities, and final positions of the LiDAR points.       the F3D metric and Maximum Mean Discrepancy (MMD)
+This process involves assigning weights to the generated Li-       as [39]. F3D represents a three-dimensional adaptation
+DAR point features, refining these features through an MLP,        of the two-dimensional Fréchet Inception Distance (FID),
+and aggregating the results to produce high-quality LiDAR          utilizing a pre-trained occupancy auto-encoder. The MMD is
+outputs with realistic point distributions.                        calculated within the feature space of this same auto-encoder.
+   Specifically, for n points on a LiDAR ray, the feature of       Given that BEV layouts are used for generation, Mean
+the i-th point, ui , is sampled from the output of the LiDAR       Intersection over Union (mIoU) serves as the metric for
+Sparse UNet with the occupancy-based prior guidance. This          evaluating the accuracy of the generated outputs. For
+feature is then fed into an MLP to predict the corresponding       occupancy forecasting, we report both IoU and mIoU,
+Signed Distance Function (SDF) value. The weight for the           aligning with previous works [86]. For video generation
+point, wi , is subsequently computed and used to determine         assessment, we utilize the FID and Frechet Video Distance
+the ray depth di of the generated LiDAR points according           (FVD) to evaluate the quality of the generated content,
+to Eq. 8 and Eq. 9 in the main paper. Additionally, the ray        following previous works [20, 58]. For the evaluation
+feature, vr , is obtained by performing a weighted sum of          of LiDAR generation, we apply the Jensen-Shannon
+the features of all points along the ray, using their respective   Divergence (JSD) and MMD following LiDARDM [91].
+weights, that is,                                                      For the downstream perception task of Semantic
+                                                                   Occupancy Prediction (SOP), we adopt mIoU and IoU as
+                        n            n
+                        X            X                             evaluation metrics, following previous research [11, 31].
+                 vr =         ki =         wi · ui .       (19)    For BEV segmentation, we use CVT [87] as the baseline
+                        i=1          i=1
+                                                                   and assess the mIoU for road and vehicle classes, following
+Finally, vr is passed through another MLP to simultaneously        the approach in [15]. For 3D object detection, we employ
+predict the intensity and drop probability of the LiDAR ray.       BEVFusion [40] as the baseline model and measure
+                                                                   performance using mean Average Precision (mAP) and the
+D. Datasets                                                        NuScenes Detection Score (NDS), as employed in [15].
+
+The NuScenes benchmark [9] is widely used in autonomous            F. Model Setup
+driving research. To enrich this dataset with more detailed
+annotations, the NuScenes-Occupancy dataset [62] has intro-        The UniScene framework undergoes a two-stage training
+duced dense semantic occupancy labels. This dataset encom-         process implemented with PyTorch on NVIDIA A100 GPUs.
+passes comprehensive LiDAR sweep data across 850 scenes,           Initially, the occupancy generative models are trained using
+comprising 34,000 key-frames at a frame rate of 2 Hz, each         ground-truth labels. Subsequently, the occupancy generative
+annotated with one of 17 semantic categories. Following the        model is fixed to generate occupancy grids from the BEV
+methodology described in [62], our study allocates 28,130          maps, while the video and LiDAR generation models are
+frames for the training set and 6,019 frames for validation.       jointly trained with occupancy-based conditions.
+   However, the 2 Hz data alone does not meet our                     The occupancy generation model is first trained with a
+requirements. To enhance our results and ensure a fair             batch size of 16 and an AdamW optimizer. The number of oc-
+comparison with previous works [15, 55, 66, 71, 85], we            cupancy frames is fixed at 8 during training. For Occupancy
+further extend it into 12 Hz data. Specifically, we utilize        VAE, the learnable class embedding C ′ is set to 8 following
+the interpolated 12 Hz annotations from ASAP [61] and the          [86]. The learning rate is set to 1 × 10−3 over 200 epochs.
+LiDAR data from the NuScenes dataset to generate semantic          For Occupancy DiT, the diffusion transformer model is based
+occupancy labels at 12 Hz. We begin the generation of              on [48], with a learning rate of 1 × 10−4 over 600 epochs.
+the 12 Hz occupancy labels by concatenating the LiDAR                 In the second stage, the video generation model and the
+points from the entire scene, following the method outlined        LiDAR generation model are jointly trained for 90 epochs
+in [69]. Next, we reconstruct the mesh of the driving scene        with a total batch size of 96 and an initial learning rate
+using the NKSR algorithm [22]. We then extract the vertices        of 1 × 10−5 . The video generation model is initialized
+of the mesh and assign semantic labels to these vertices           with pre-trained weights from SVD [6] with a fixed video
+based on the LiDARseg tags from NuScenes [9] and the               VAE. The image resolution for training is set to 256×512
+12 Hz annotation information from ASAP [61]. Finally, we           following [70], and the number of frames is fixed at 8. Note
+                             、..--...忙
+                                -—=—－乓 于心
+                                                           一＿2   -竺一   心";I;·                                      (LLM) to interpret the semantic scene, thereby enhancing
+                                     ．～               ＿  ；；一；一：｀．
+｀
+
+
+
+
+                                          ．
+－
+
+
+
+
+                                              1
+                                                  ．     ＿ 亡了一－
+                                                      ＿＿＿      －七        L
+                                                                                                                   forecasting accuracy.
+                                                                                                                      We compare our video generation results with other im-
+                                                                                                                   age and video generation methods, including BEVGen [55],
+                                                                                                                   BEVControl [80], DriveGAN [27], DriveDreamer [85],
+
+
+
+
+                                                                                                       P ,'
+                                                                                                         ＇，
+                                                                                                           _
+                                                                                                ,'
+                                                                                                  ．；
+                                                                                                        ,1 '
+                                                                                                               ，
+                                                                                               ，,
+                                                                                                                   WoVoGen [41], Panacea [70], MagicDrive [15], Drive-
+
+
+
+
+                                                                                                ＇'f1
+                                                                                       ,'
+                                                                                       ，
+                                                                                        .，
+                                                                                         -
+                                                                                                ,
+                                                                                         ．|
+
+
+                                                                                                ＇ ， 士
+                                                                                           r
+                                                                                                                   WM [66], Vista [16]. As mentioned in Sec.4.1 of the
+
+
+
+
+                                                                                                   r
+
+                                                                                                   C,
+                                                                                                    ,
+                                                                                                    r，
+                                                                                  LI
+                                                                                -
+                                                                                -r
+                                                                                                                   main paper, the initial model of Vista [16] only supports
+
+
+
+
+                                                                                  F,
+                                                                                   r
+                                                                                                                   single-view video generation. Thus, we implement the
+                               ＿                                                                                   multi-view variant of Vista∗ with spatial-temporal attention
+                                                                                                                   following [15, 72] for a fair comparison.
+                                                                                                                      The LiDAR generation results are compared with
+
+                                                           ｀
+                                                                                                                   Open3D [89] and LiDARDM [91]. Open3D employs a
+                                                                                                                   hard ray-casting function to generate LiDAR point clouds
+                                 ＿                                                                                 from occupancy grids. This process involves converting
+                                                                                                                   the occupancy grid into a mesh, where each occupied voxel
+                                                                                                                   is represented as a cube. The ray depth is determined
+Figure 14. Visualization of Out-of-Distribution (OOD) occupancy                                                    by calculating the intersection between the ray and the
+generation, showcasing the model’s ability to generalize and pro-                                                  nearest triangular face of the mesh. Note that this method
+duce realistic occupancy outputs in unseen scenarios. The top row                                                  does not provide intensity values or ray drop probabilities.
+displays the generated 3D occupancy grids, while the bottom row                                                    LiDARDM begins the generation process by aggregating
+presents the corresponding BEV layouts, highlighting the preserva-                                                 multi-frame point clouds and removing dynamic objects
+tion of structural and semantic consistency in OOD cases.
+                                                                                                                   using 3D object detection labels. The remaining data is
+                                                                                                                   used to reconstruct a mesh via the NKSR algorithm [22].
+                                                                                                                   A mesh diffusion model is trained using this mesh as a 3D
+                                                                                                                   representation and the BEV layout as a condition. During
+                                                                                                                   inference, a mesh is sampled from the diffusion model
+                                                                                                                   based on a BEV layout map. Mesh models of dynamic
+                                                                                                                   objects, selected from predefined assets, are then inserted
+                                                                                                                   into the generated mesh according to the detection labels of
+                                                                                                                   the corresponding frame. Hard ray casting is subsequently
+                                                                                                                   applied to obtain the point cloud. Similar to Open3D,
+                                                                                                                   LiDARDM does not generate intensity values and requires
+                                                                                                                   an additional network to predict ray drop probabilities.
+
+                                                                                                                   H. More Visualization Results
+Figure 15. Visualization of the effect on geometric aware noise
+prior. Our method injects dense appearance priors and incorporates                                                 Out-of-Distribution Occupancy Generation. To further
+explicit geometric awareness in the sampling process, resulting in                                                 illustrate the strong generalization capability and controlla-
+high-fidelity and consistent moving cars across different frames.                                                  bility of our occupancy generation model, we present the
+                                                                                                                   Out-of-Distribution (OOD) occupancy generation results,
+                                                                                                                   as shown in Fig. 14. These visualizations demonstrate the
+that we apply the roll-out sampling strategy following [16]                                                        model’s ability to generate realistic occupancy outputs in
+in the sampling process to enable long-term generation.                                                            previously unseen scenarios, while maintaining structural
+The LiDAR generation model is trained from scratch. The                                                            and semantic consistency in OOD cases.
+AdamW optimizer is leveraged during the training.                                                                  Generalization on other Autonomous Driving Datasets.
+                                                                                                                   As shown in Fig. 19, we evaluate the generalization ability
+G. Comparison Baselines                                                                                            of our model on the Waymo and nuPlan datastes. Given
+                                                                                                                   scene layouts, our model can be directly transferred to
+The occupancy generation method is compared with Oc-                                                               different datasets with conditional reference images. Note
+cLlama [68], OccWorld [86], and OccSora [59]. OccWorld                                                             that due to unavailability, the back view on the Waymo
+relies on historical occupancy data and the trajectory of                                                          dataset is set to null.
+the ego vehicle to predict future occupancy. Building upon                                                         Effect on Geometric Aware Noise Prior. As mentioned in
+OccWorld, OccLlama incorporates a Large Language Model                                                             Sec.3.2 of the main paper, the Geometric-aware Noise Prior
+Figure 16. Visualization of LiDAR beam scanning patterns across different configurations. The ground truth utilizes a 32-beam LiDAR
+setup, while the proposed methods (’Ours-16’, ’Ours-32’, and ’Ours-64’) demonstrate varying levels of beam density. The comparison
+highlights the model’s ability to simulate realistic LiDAR patterns and preserve scene geometry across different beam resolutions.
+
+
+
+
+Figure 17. Visualization of large-scale coherent generation, where a large-scale BEV layout serves as the input. The long-term semantic
+occupancy from the given BEV layouts is first produced, which subsequently guides the generation of LiDAR point clouds and multi-view
+videos. The results demonstrate the model’s ability to produce temporally and spatially consistent outputs in large-scale environments.
+Figure 18. Visualization of controllable video generation with diverse attributes. The pipeline demonstrates the ability to generate videos
+conditioned on BEV layouts, with control over various attributes such as weather (sunny, cloudy, rainy) and time of day (day, night). The top
+and bottom rows showcase different input configurations, resulting in realistic video outputs with the desired attribute variations.
+
+
+
+
+Figure 19. Generalization on the Waymo (upper) and nuPlan (lower) datasets. Due to unavailability, the back view on the Waymo dataset
+is set to null.
+
+
+strategy injects dense appearance priors and incorporates                in Fig. 15. We can see that the video generation quality is
+explicit geometric awareness in the sampling process of                  obviously improved, resulting in high-fidelity and consistent
+video generation. The Visualization results are illustrated              moving cars across different frames.
+Diverse LiDAR Beam Scanning Patterns. Owing to the
+flexibility of our ray-based LiDAR heads, the scanning
+pattern of the LiDAR beam can be freely configured.
+This capability facilitates the generation of LiDAR point
+clouds with various scanning patterns without necessitating
+retraining. As illustrated in Fig. 16, whereas the ground
+truth LiDAR beam is constrained to 32, our method is
+capable of generalizing to 16, 32, and 64 LiDAR beams.
+The visualization underscores the model’s capability to
+simulate realistic LiDAR patterns while preserving scene
+geometry across various beam resolutions.
+Versatile Generation Ability of UniScene. To further
+demonstrate the versatile generation capabilities of our
+proposed UniScene, we apply it across various scenarios.
+Figure 17 illustrates UniScene’s capacity to generate large-
+scale, coherent scenes, underscoring the model’s ability to
+produce outputs that are temporally and spatially consistent
+in extensive environments. The controllable generation
+of attribute-diverse videos is showcased in Figure 18,
+highlighting realistic video outputs with desired attribute
+variations for different input configurations. Additionally,
+the application of UniScene to scene editing is depicted
+in Figure 20, demonstrating the model’s flexibility in
+generating consistent and realistic outcomes based on edited
+scene geometries. The results presented in Figures 21, 22,
+and 23 further exemplify UniScene’s capability to jointly
+produce high-quality semantic occupancy, video, and
+LiDAR data, all while maintaining temporal consistency.
+Figure 20. Visualization of controllable generation through geometry editing, demonstrating the ability to manipulate BEV layouts to alter
+scene geometry. The process begins with modified BEV layouts, followed by the generation of updated semantic occupancy and LiDAR
+point clouds. These results in multi-view video outputs that reflect the geometric changes, showcasing the model’s flexibility in producing
+consistent and realistic outputs based on edited scene geometries.
+Figure 21. More visualization of unified generation of semantic occupancy, LiDAR point clouds, and multi-view videos.
+Figure 22. More visualization of unified generation of semantic occupancy, LiDAR point clouds, and multi-view videos.
+Figure 23. More visualization of unified generation of semantic occupancy, LiDAR point clouds, and multi-view videos.
+References                                                                 image synthesis with spatial-categorical joint prior. arXiv
+                                                                           preprint arXiv:2403.09638, 2024. 4
+ [1] Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tarlow,
+                                                                      [15] Ruiyuan Gao, Kai Chen, Enze Xie, Lanqing Hong, Zhenguo
+     and Rianne Van Den Berg. Structured denoising diffusion
+                                                                           Li, Dit-Yan Yeung, and Qiang Xu. Magicdrive: Street view
+     models in discrete state-spaces. Advances in Neural Informa-
+                                                                           generation with diverse 3d geometry control. In ICLR, 2024.
+     tion Processing Systems, 34:17981–17993, 2021. 9
+                                                                           1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14
+ [2] Xuyang Bai, Zeyu Hu, Xinge Zhu, Qingqiu Huang, Yilun
+                                                                      [16] Shenyuan Gao, Jiazhi Yang, Li Chen, Kashyap Chitta, Yihang
+     Chen, Hongbo Fu, and Chiew-Lan Tai. Transfusion: Robust
+                                                                           Qiu, Andreas Geiger, Jun Zhang, and Hongyang Li. Vista:
+     lidar-camera fusion for 3d object detection with transformers.
+                                                                           A generalizable driving world model with high fidelity and
+     In CVPR, 2022. 1
+                                                                           versatile controllability. arXiv preprint arXiv:2405.17398,
+ [3] Jonathan T. Barron, Ben Mildenhall, Dor Verbin, Pratul P.             2024. 2, 3, 5, 6, 7, 8, 9, 14
+     Srinivasan, and Peter Hedman. Zip-nerf: Anti-aliased grid-       [17] Benjamin Graham and Laurens Van der Maaten. Sub-
+     based neural radiance fields. In ICCV, 2023. 5                        manifold sparse convolutional networks. arXiv preprint
+ [4] Maxim Berman, Amal Rannen Triki, and Matthew B                        arXiv:1706.01307, 2017. 8
+     Blaschko. The lovász-softmax loss: A tractable surrogate         [18] Martin Hahner, Christos Sakaridis, Mario Bijelic, Felix Heide,
+     for the optimization of the intersection-over-union measure           Fisher Yu, Dengxin Dai, and Luc Van Gool. Lidar snowfall
+     in neural networks. In CVPR, 2018. 10                                 simulation for robust 3d object detection. In CVPR, 2022. 9,
+ [5] Julie Stephany Berrio, Mao Shan, Stewart Worrall, and Ed-             10
+     uardo Nebot. Camera-lidar integration: Probabilistic sensor      [19] Ruifei He, Shuyang Sun, Xin Yu, Chuhui Xue, Wenqing
+     fusion for semantic mapping. IEEE Transactions on Intelli-            Zhang, Philip Torr, Song Bai, and Xiaojuan Qi. Is synthetic
+     gent Transportation Systems, 23(7):7637–7652, 2021. 1                 data from generative models ready for image recognition?
+ [6] Andreas Blattmann, Tim Dockhorn, Sumith Kulal, Daniel                 arXiv preprint arXiv:2210.07574, 2022. 1
+     Mendelevitch, Maciej Kilian, Dominik Lorenz, Yam Levi,           [20] Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bern-
+     Zion English, Vikram Voleti, Adam Letts, et al. Stable video          hard Nessler, and Sepp Hochreiter. Gans trained by a two
+     diffusion: Scaling latent video diffusion models to large             time-scale update rule converge to a local nash equilibrium.
+     datasets. arXiv preprint arXiv:2311.15127, 2023. 4, 5, 9,             NeurIPS, 2017. 13
+     11, 13                                                           [21] Yihan Hu, Jiazhi Yang, Li Chen, Keyu Li, Chonghao Sima,
+ [7] Andreas Blattmann, Robin Rombach, Huan Ling, Tim Dock-                Xizhou Zhu, Siqi Chai, Senyao Du, Tianwei Lin, Wenhai
+     horn, Seung Wook Kim, Sanja Fidler, and Karsten Kreis.                Wang, et al. Planning-oriented autonomous driving. In CVPR,
+     Align your latents: High-resolution video synthesis with la-          2023. 2
+     tent diffusion models. In CVPR, 2023. 3                          [22] Jiahui Huang, Zan Gojcic, Matan Atzmon, Or Litany, Sanja
+ [8] Christopher Bowles, Liang Chen, Ricardo Guerrero, Paul                Fidler, and Francis Williams. Neural kernel surface recon-
+     Bentley, Roger Gunn, Alexander Hammers, David Alexan-                 struction. In Proceedings of the IEEE/CVF Conference on
+     der Dickie, Maria Valdés Hernández, Joanna Wardlaw, and               Computer Vision and Pattern Recognition, pages 4369–4379,
+     Daniel Rueckert. Gan augmentation: Augmenting training                2023. 13, 14
+     data using generative adversarial networks. arXiv preprint       [23] Yuanhui Huang, Wenzhao Zheng, Yunpeng Zhang, Jie Zhou,
+     arXiv:1810.10863, 2018. 1                                             and Jiwen Lu. Tri-perspective view for vision-based 3d se-
+ [9] Holger Caesar, Varun Bankiti, Alex H Lang, Sourabh Vora,              mantic occupancy prediction. In CVPR, 2023. 2, 8
+     Venice Erin Liong, Qiang Xu, Anush Krishnan, Yu Pan, Gi-         [24] Hao Jiang and Yadong Mu. Conditional diffusion process for
+     ancarlo Baldan, and Oscar Beijbom. nuscenes: A multimodal             inverse halftoning. NeurIPS, 35:5498–5509, 2022. 1
+     dataset for autonomous driving. CVPR, 2020. 5, 13                [25] Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, and
+[10] Changjiang Cai, Pan Ji, Qingan Yan, and Yi Xu. Riav-mvs:              George Drettakis. 3d gaussian splatting for real-time radiance
+     Recurrent-indexing an asymmetric volume for multi-view                field rendering. ACM Trans. Graph., 42(4):139–1, 2023. 11,
+     stereo. In CVPR, 2023. 4                                              12
+[11] Anh-Quan Cao and Raoul de Charette. Monoscene: Monoc-            [26] Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, and
+     ular 3d semantic scene completion. In CVPR, 2022. 2, 8,               George Drettakis. 3d gaussian splatting for real-time radiance
+     13                                                                    field rendering. ACM Trans. Graph., 2023. 2, 4
+[12] Kai Chen, Enze Xie, Zhe Chen, Lanqing Hong, Zhenguo              [27] Seung Wook Kim, Jonah Philion, Antonio Torralba, and Sanja
+     Li, and Dit-Yan Yeung. Integrating geometric control into             Fidler. Drivegan: Towards a controllable high-quality neural
+     text-to-image diffusion models for high-quality detection data        simulation. In CVPR, 2021. 6, 14
+     generation via text prompt. arXiv preprint arXiv:2306.04607,     [28] Animesh Koratana, Daniel Kang, Peter Bailis, and Matei
+     2023. 1                                                               Zaharia. Lit: Learned intermediate representation training for
+[13] Xiaokang Chen, Kwan-Yee Lin, Chen Qian, Gang Zeng, and                model compression. In ICML. PMLR. 2
+     Hongsheng Li. 3d sketch-aware semantic scene completion          [29] Jumin Lee, Woobin Im, Sebin Lee, and Sung-Eui Yoon. Diffu-
+     via semi-supervised structure prior. In CVPR, 2020. 8                 sion probabilistic models for scene-scale 3d categorical data.
+[14] Huan-ang Gao, Mingju Gao, Jiaju Li, Wenyi Li, Rong Zhi,               Workshop on Image Processing and Image Understanding,
+     Hao Tang, and Hao Zhao. Scp-diff: Photo-realistic semantic            2023. 2, 9
+[30] Jumin Lee, Sebin Lee, Changho Jo, Woobin Im, Juhyeong                  the IEEE/CVF Conference on Computer Vision and Pattern
+     Seon, and Sung-Eui Yoon. Semcity: Semantic scene genera-               Recognition, pages 6038–6047, 2023. 10
+     tion with triplane diffusion. In CVPR, 2024. 2, 9                 [46] Anders Giovanni Møller, Jacob Aarup Dalsgaard, Arianna
+[31] Bohan Li, Yasheng Sun, Jingxin Dong, Zheng Zhu, Jinming                Pera, and Luca Maria Aiello. Is a prompt and a few
+     Liu, Xin Jin, and Wenjun Zeng. One at a time: Progres-                 samples all you need? using gpt-4 for data augmenta-
+     sive multi-step volumetric probability learning for reliable 3d        tion in low-resource classification tasks. arXiv preprint
+     scene perception. In AAAI, 2024. 1, 2, 13                              arXiv:2304.13861, 2023. 1
+[32] Jie Li, Kai Han, Peng Wang, Yu Liu, and Xia Yuan.                 [47] William Peebles and Saining Xie. Scalable diffusion models
+     Anisotropic convolutional networks for 3d semantic scene               with transformers. arXiv preprint arXiv:2212.09748, 2022.
+     completion. In CVPR, 2020. 8                                           11
+[33] Leheng Li, Weichao Qiu, Yingjie Cai, Xu Yan, Qing Lian,
+                                                                       [48] William Peebles and Saining Xie. Scalable diffusion models
+     Bingbing Liu, and Ying-Cong Chen. Syntheocc: Synthesize
+                                                                            with transformers. In ICCV, pages 4195–4205, 2023. 4, 9, 13
+     geometric-controlled street view images through 3d semantic
+     mpis. arXiv preprint arXiv:2410.00337, 2024. 9                    [49] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya
+                                                                            Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry,
+[34] Wenyi Li, Haoran Xu, Guiyu Zhang, Huan-ang Gao, Mingju
+                                                                            Amanda Askell, Pamela Mishkin, Jack Clark, et al. Learning
+     Gao, Mengyu Wang, and Hao Zhao. Fairdiff: Fair segmenta-
+                                                                            transferable visual models from natural language supervision.
+     tion with point-image diffusion. In International Conference
+                                                                            In ICML, 2021. 9
+     on Medical Image Computing and Computer-Assisted Inter-
+     vention. Springer. 1                                              [50] Haoxi Ran, Vitor Guizilini, and Yue Wang. Towards realistic
+[35] Yingwei Li, Adams Wei Yu, Tianjian Meng, Ben Caine, Ji-                scene generation with lidar diffusion models. In CVPR, 2024.
+     quan Ngiam, Daiyi Peng, Junyang Shen, Yifeng Lu, Denny                 2, 3, 9
+     Zhou, Quoc V Le, et al. Deepfusion: Lidar-camera deep             [51] Luis Roldao, Raoul de Charette, and Anne Verroust-Blondet.
+     fusion for multi-modal 3d object detection. In CVPR, 2022. 1           Lmscnet: Lightweight multiscale 3d semantic completion. In
+[36] Zhiqi Li, Zhiding Yu, David Austin, Mingsheng Fang, Shiyi              3DV, 2020. 8
+     Lan, Jan Kautz, and Jose M Alvarez. Fb-occ: 3d occupancy          [52] Robin Rombach, Andreas Blattmann, Dominik Lorenz,
+     prediction based on forward-backward view transformation.              Patrick Esser, and Björn Ommer. High-resolution image
+     arXiv preprint arXiv:2307.01492, 2023.                                 synthesis with latent diffusion models. In CVPR, pages 10684–
+[37] Ziyi Li, Qinye Zhou, Xiaoyun Zhang, Ya Zhang, Yanfeng                  10695, 2022. 1
+     Wang, and Weidi Xie. Open-vocabulary object segmentation          [53] Shaoshuai Shi, Zhe Wang, Jianping Shi, Xiaogang Wang, and
+     with diffusion models. In ICCV, 2023. 1                                Hongsheng Li. From points to parts: 3d object detection
+[38] Tingting Liang, Hongwei Xie, Kaicheng Yu, Zhongyu Xia,                 from point cloud with part-aware and part-aggregation net-
+     Zhiwei Lin, Yongtao Wang, Tao Tang, Bing Wang, and Zhi                 work. IEEE transactions on pattern analysis and machine
+     Tang. Bevfusion: A simple and robust lidar-camera fusion               intelligence, 43(8):2647–2664, 2020. 5
+     framework. NeurIPS, 2022. 1                                       [54] Alexander Swerdlow, Runsheng Xu, and Bolei Zhou. Street-
+[39] Yuheng Liu, Xinke Li, Xueting Li, Lu Qi, Chongshou Li, and             view image generation from a bird’s-eye view layout. IEEE
+     Ming-Hsuan Yang. Pyramid diffusion for fine 3d large scene             Robotics and Automation Letters, 2024. 1, 2
+     generation. ECCV, 2024. 2, 9, 13
+                                                                       [55] Alexander Swerdlow, Runsheng Xu, and Bolei Zhou. Street-
+[40] Zhijian Liu, Haotian Tang, Alexander Amini, Xinyu Yang,
+                                                                            view image generation from a bird’s-eye view layout. IEEE
+     Huizi Mao, Daniela L Rus, and Song Han. Bevfusion: Multi-
+                                                                            Robotics and Automation Letters, 2024. 2, 3, 6, 7, 8, 13, 14
+     task multi-sensor fusion with unified bird’s-eye view repre-
+     sentation. In ICRA. IEEE, 2023. 7, 8, 13                          [56] Ayush Tewari, Tianwei Yin, George Cazenavette, Semon
+[41] Jiachen Lu, Ze Huang, Jiahui Zhang, Zeyu Yang, and Li                  Rezchikov, Josh Tenenbaum, Frédo Durand, Bill Freeman,
+     Zhang. Wovogen: World volume-aware diffusion for control-              and Vincent Sitzmann. Diffusion with forward models: Solv-
+     lable multi-camera driving scene generation. arXiv preprint            ing stochastic inverse problems without direct supervision.
+     arXiv:2312.02934, 2023. 3, 6, 9, 14                                    NeurIPS, 2023. 2
+[42] Shitong Luo and Wei Hu. Diffusion probabilistic models for        [57] Wenwen Tong, Chonghao Sima, Tai Wang, Li Chen, Silei
+     3d point cloud generation. In CVPR, pages 2837–2845, 2021.             Wu, Hanming Deng, Yi Gu, Lewei Lu, Ping Luo, Dahua Lin,
+     1                                                                      et al. Scene as occupancy. In ICCV, pages 8406–8415, 2023.
+[43] Xin Ma, Yaohui Wang, Gengyun Jia, Xinyuan Chen, Ziwei                  2
+     Liu, Yuan-Fang Li, Cunjian Chen, and Yu Qiao. Latte: Latent       [58] Thomas Unterthiner, Sjoerd Van Steenkiste, Karol Kurach,
+     diffusion transformer for video generation. arXiv preprint             Raphael Marinier, Marcin Michalski, and Sylvain Gelly. To-
+     arXiv:2401.03048, 2024. 4                                              wards accurate generative models of video: A new metric &
+[44] Yifang Men, Yiming Mao, Yuning Jiang, Wei-Ying Ma, and                 challenges. arXiv preprint arXiv:1812.01717, 2018. 13
+     Zhouhui Lian. Controllable person image synthesis with            [59] Lening Wang, Wenzhao Zheng, Yilong Ren, Han Jiang, Zhiy-
+     attribute-decomposed gan. In CVPR, 2020. 2                             ong Cui, Haiyang Yu, and Jiwen Lu. Occsora: 4d occupancy
+[45] Ron Mokady, Amir Hertz, Kfir Aberman, Yael Pritch, and                 generation models as world simulators for autonomous driv-
+     Daniel Cohen-Or. Null-text inversion for editing real im-              ing. arXiv preprint arXiv:2405.20337, 2024. 2, 6, 9, 10,
+     ages using guided diffusion models. In Proceedings of                  14
+[60] Peng Wang, Lingjie Liu, Yuan Liu, Christian Theobalt, Taku            image diffusion models for text-to-video generation. In ICCV,
+     Komura, and Wenping Wang. Neus: Learning neural implicit              2023. 4, 6, 7, 8, 14
+     surfaces by volume rendering for multi-view reconstruction.      [73] Weijia Wu, Yuzhong Zhao, Hao Chen, Yuchao Gu, Rui Zhao,
+     arXiv preprint arXiv:2106.10689, 2021. 5, 8                           Yefei He, Hong Zhou, Mike Zheng Shou, and Chunhua Shen.
+[61] Xiaofeng Wang, Zheng Zhu, Yunpeng Zhang, Guan Huang,                  Datasetdm: Synthesizing data with perception annotations
+     Yun Ye, Wenbo Xu, Ziwei Chen, and Xingang Wang. Are                   using diffusion models. In NeurIPS, 2023. 1
+     we ready for vision-centric driving streaming perception? the    [74] Zirui Wu, Tianyu Liu, Liyi Luo, Zhide Zhong, Jianteng
+     asap benchmark. arXiv preprint arXiv:2212.08914, 2022. 5,             Chen, Hongmin Xiao, Chao Hou, Haozhe Lou, Yuantao Chen,
+     13                                                                    Runyi Yang, Yuxin Huang, Xiaoyu Ye, Zike Yan, Yongliang
+[62] Xiaofeng Wang, Zheng Zhu, Wenbo Xu, Yunpeng Zhang, Yi                 Shi, Yiyi Liao, and Hao Zhao. Mars: An instance-aware, mod-
+     Wei, Xu Chi, Yun Ye, Dalong Du, Jiwen Lu, and Xingang                 ular and realistic simulator for autonomous driving. CICAI,
+     Wang. Openoccupancy: A large scale benchmark for sur-                 2023. 3
+     rounding semantic occupancy perception. ICCV, 2023. 1, 2,        [75] Yuanbo Xiangli, Linning Xu, Xingang Pan, Nanxuan Zhao,
+     5, 7, 8, 13                                                           Anyi Rao, Christian Theobalt, Bo Dai, and Dahua Lin.
+[63] Xiaofeng Wang, Zheng Zhu, Guan Huang, Xinze Chen, and                 Bungeenerf: Progressive neural radiance field for extreme
+     Jiwen Lu. Drivedreamer: Towards real-world-driven world               multi-scale scene rendering. In ECCV. 3
+     models for autonomous driving. ECCV, 2024. 1, 2, 3, 9            [76] Yuwen Xiong, Wei-Chiu Ma, Jingkang Wang, and Raquel Ur-
+[64] Yanhui Wang, Jianmin Bao, Wenming Weng, Ruoyu Feng,                   tasun. Learning compact representations for lidar completion
+     Dacheng Yin, Tao Yang, Jingxu Zhang, Qi Dai, Zhiyuan Zhao,            and generation. In CVPR, 2023. 9
+     Chunyu Wang, et al. Microcinema: A divide-and-conquer            [77] Yuwen Xiong, Wei-Chiu Ma, Jingkang Wang, and Raquel Ur-
+     approach for text-to-video generation. In CVPR, 2024. 4               tasun. Ultralidar: Learning compact representations for lidar
+[65] Yibo Wang, Ruiyuan Gao, Kai Chen, Kaiqiang Zhou, Yingjie              completion and generation. arXiv preprint arXiv:2311.01448,
+     Cai, Lanqing Hong, Zhenguo Li, Lihui Jiang, Dit-Yan Yeung,            2023. 9
+     Qiang Xu, et al. Detdiffusion: Synergizing generative and per-   [78] Xu Yan, Jiantao Gao, Jie Li, Ruimao Zhang, Zhen Li, Rui
+     ceptive models for enhanced data generation and perception.           Huang, and Shuguang Cui. Sparse single sweep lidar point
+     CVPR, 2024. 1                                                         cloud segmentation via learning contextual shape priors from
+[66] Yuqi Wang, Jiawei He, Lue Fan, Hongxin Li, Yuntao Chen,               scene completion. In AAAI, 2021. 8
+     and Zhaoxiang Zhang. Driving into the future: Multiview          [79] Yunzhi Yan, Haotong Lin, Chenxu Zhou, Weijie Wang,
+     visual forecasting and planning with world model for au-              Haiyang Sun, Kun Zhan, Xianpeng Lang, Xiaowei Zhou,
+     tonomous driving. In CVPR, 2024. 1, 2, 3, 6, 9, 13, 14                and Sida Peng. Street gaussians for modeling dynamic urban
+[67] Jamie Watson, Oisin Mac Aodha, Victor Prisacariu, Gabriel             scenes. arXiv preprint arXiv:2401.01339, 2024. 3
+     Brostow, and Michael Firman. The temporal opportunist:           [80] Kairui Yang, Enhui Ma, Jibin Peng, Qing Guo, Di Lin, and
+     Self-supervised multi-frame monocular depth. In CVPR, 2021.           Kaicheng Yu. Bevcontrol: Accurately controlling street-view
+     4                                                                     elements with multi-perspective consistency via bev sketch
+[68] Julong Wei, Shanshuai Yuan, Pengfei Li, Qingda Hu,                    layout. arXiv preprint arXiv:2308.01661, 2023. 1, 2, 6, 14
+     Zhongxue Gan, and Wenchao Ding.              Occllama: An        [81] Ze Yang, Yun Chen, Jingkang Wang, Sivabalan Manivasagam,
+     occupancy-language-action generative world model for au-              Wei-Chiu Ma, Anqi Joyce Yang, and Raquel Urtasun. Unisim:
+     tonomous driving. arXiv preprint arXiv:2409.03272, 2024. 2,           A neural closed-loop sensor simulator. In CVPR, 2023. 5
+     3, 6, 10, 11, 14                                                 [82] Guy Yariv, Itai Gat, Sagie Benaim, Lior Wolf, Idan Schwartz,
+[69] Yi Wei, Linqing Zhao, Wenzhao Zheng, Zheng Zhu, Jie Zhou,             and Yossi Adi. Diverse and aligned audio-to-video generation
+     and Jiwen Lu. Surroundocc: Multi-camera 3d occupancy                  via text-to-video model adaptation. In AAAI, 2024. 3
+     prediction for autonomous driving. In Proceedings of the         [83] Junge Zhang, Qihang Zhang, Li Zhang, Ramana Rao Kom-
+     IEEE/CVF International Conference on Computer Vision,                 pella, Gaowen Liu, and Bolei Zhou. Urban scene dif-
+     pages 21729–21740, 2023. 13                                           fusion through semantic occupancy map. arXiv preprint
+[70] Yuqing Wen, Yucheng Zhao, Yingfei Liu, Fan Jia, Yanhui                arXiv:2403.11697, 2024. 9
+     Wang, Chong Luo, Chi Zhang, Tiancai Wang, Xiaoyan Sun,           [84] Lvmin Zhang, Anyi Rao, and Maneesh Agrawala. Adding
+     and Xiangyu Zhang. Panacea: Panoramic and controllable                conditional control to text-to-image diffusion models. In
+     video generation for autonomous driving, 2023. 1, 3, 6, 13,           ICCV, 2023. 4, 12
+     14                                                               [85] Guosheng Zhao, Xiaofeng Wang, Zheng Zhu, Xinze Chen,
+[71] Yuqing Wen, Yucheng Zhao, Yingfei Liu, Fan Jia, Yanhui                Guan Huang, Xiaoyi Bao, and Xingang Wang. Drivedreamer-
+     Wang, Chong Luo, Chi Zhang, Tiancai Wang, Xiaoyan Sun,                2: Llm-enhanced world models for diverse driving video
+     and Xiangyu Zhang. Panacea: Panoramic and controllable                generation. arXiv preprint arXiv:2403.06845, 2024. 1, 2, 5,
+     video generation for autonomous driving. In CVPR, 2024. 1,            6, 9, 13, 14
+     2, 9, 13                                                         [86] Wenzhao Zheng, Weiliang Chen, Yuanhui Huang, Borui
+[72] Jay Zhangjie Wu, Yixiao Ge, Xintao Wang, Stan Weixian Lei,            Zhang, Yueqi Duan, and Jiwen Lu. Occworld: Learning
+     Yuchao Gu, Yufei Shi, Wynne Hsu, Ying Shan, Xiaohu Qie,               a 3d occupancy world model for autonomous driving. arXiv
+     and Mike Zheng Shou. Tune-a-video: One-shot tuning of                 preprint arXiv:2311.16038, 2023. 2, 3, 6, 10, 11, 13, 14
+[87] Brady Zhou and Philipp Krähenbühl. Cross-view transform-
+     ers for real-time map-view semantic segmentation. In CVPR,
+     2022. 7, 8, 13
+[88] Hongyu Zhou, Jiahao Shao, Lu Xu, Dongfeng Bai, Weichao
+     Qiu, Bingbing Liu, Yue Wang, Andreas Geiger, and Yiyi Liao.
+     Hugs: Holistic urban 3d scene understanding via gaussian
+     splatting. In CVPR, 2024. 2, 4
+[89] Qian-Yi Zhou, Jaesik Park, and Vladlen Koltun. Open3d:
+     A modern library for 3d data processing. arXiv preprint
+     arXiv:1801.09847, 2018. 6, 7, 14
+[90] Vlas Zyrianov, Xiyue Zhu, and Shenlong Wang. Learning to
+     generate realistic lidar point cloud. In ECCV, 2022. 2, 9
+[91] Vlas Zyrianov, Henry Che, Zhijian Liu, and Shenlong Wang.
+     Lidardm: Generative lidar simulation in a generated world.
+     arXiv preprint arXiv:2404.02903, 2024. 1, 2, 3, 6, 7, 9, 13,
+     14
+
