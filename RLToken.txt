@@ -1,0 +1,756 @@
+===== Page 1 =====
+RL Token: Bootstrapping Online RL with
+             Vision-Language-Action Models
+
+
+          Charles Xu, Jost Tobias Springenberg, Michael Equi, Ali Amin, Adnan Esmail, Sergey Levine, Liyiming Ke
+                                                         Physical Intelligence
+                                                               https://pi.website/research/rlt
+
+
+
+            Data      VLA with RL Token          Online RL                  Final RL Policy
+
+                                                                       value            screw         zip tie      ethernet &                                   decoder                  critic                                                                      Q(s,a)        installation    fastening   power insertion
+                                  RL token2026
+Apr                            encoder
+                                         action                                VLA
+30                                   expert                        action
+                                    lang                    actor      chunk
+
+
+            Fig. 1: Our method introduces an “RL token” into the VLA by training an encoder and decoder to produce a compact and meaningful representation from
+           a VLA’s internal features. The extracted representation is then used to train lightweight actor-critic networks with sample-efficient online RL, enabling very
+            precise tasks to be fine-tuned with a few hours or even minutes of robot experience.[cs.LG]
+            Abstract—Vision-language-action (VLA) models can learn to   often the stages most sensitive to small errors and the hardest
+        perform diverse manipulation skills “out of the box,” but achiev-   to cover reliably with demonstrations alone. But real-world
+          ing the precision and speed that real-world tasks demand requires                                                                           robotics operates under a tight budget: every episode takes
+          further fine-tuning – for example, via reinforcement learning
+                                                                          time, every failure consumes effort and wear, and meaningful         (RL). We introduce a lightweight method that enables sample-
+           efficient online RL fine-tuning of pretrained VLAs using just a   adaptation often has to happen within a few hours of practice.
+        few hours of real-world practice. We (1) adapt the VLA to expose     Sample-efficient fine-tuning of VLAs, however, presents
+        an “RL token,” a compact readout representation that preserves
+                                                                 major challenges. On one hand, conventional methods for
+          task-relevant pretrained knowledge while serving as an efficient
+          interface for online RL, and (2) train a small actor-critic head on  RL training of foundation models [1–3] rely on large-scale
+           this RL token to refine the actions, while anchoring the learned   data and can be inefficient for rapid online adaptation. On
+          policy to the VLA. Online RL with the RL token (RLT) makes   the other hand, data-efficient real-world RL methods [4, 5]
+              it possible to fine-tune even large VLAs with RL quickly and   typically train much smaller models, which can improve within
+            efficiently. Across four real-robot tasks (screw installation, zip
+                                                                    hours but sacrifice the generalization capabilities of the VLA.
+            tie fastening, charger insertion, and Ethernet insertion) RLT
+         improves the speed on the hardest part of the task by up to  The central question, then,  is how to leverage the VLA’s
+                                                                           generalization while achieving the speed and sample efficiencyarXiv:2604.23073v2  3× and raises success rates significantly within minutes to a
+        few hours of practice. It can even surpass the speed of human   of lightweight online RL.
+          teleoperation on some of the tasks.
+                                                We introduce a practical recipe that bootstraps fast online
+                                                                      reinforcement learning with representations obtained from a
+                                        I. INTRODUCTION
+                                                                           pretrained VLA policy. Our key idea is to adapt the VLA so
+           General-purpose vision-language-action (VLA) models can   that it exposes a compact interface that can be used for sample-
+          learn a wide range of diverse manipulation skills from data. Yet   efficient online RL. We achieve this by training the VLA to
+         they often struggle in the last millimeter of execution: motions   expose an RL token, a compressed representation that makes
+        can be slow, successful completion may require pauses and   task-relevant pretrained knowledge accessible to a lightweight
+           retries, and small errors at critical stages of precise tasks can   online RL policy. Running RL with this RL token (RLT)
+       compound into failure. A natural way to address this challenge   creates a simple division of labor: the frozen VLA provides
+           is to fine-tune VLAs with reinforcement learning (RL). By   broad perceptual understanding and action recommendations,
+          practicing on the target task, RL can improve precisely the   while the lightweight actor and  critic adapt the policy to
+         stages of the task that are most critical for success, which are   succeed at the hardest parts of a task online. To make this
+
+===== Page 2 =====
+practical in the sample-efficient real-world regime, our method  may be necessary to avoid  instability [22]. Crucially, off-
+uses a sample-efficient online RL algorithm to train the small   policy methods can also incorporate human demonstration
+actor and critic networks that use the RL token representation,   data to bootstrap learning (e.g. [23]), combining the strengths
+with an additional regularizer to anchor the actor to the VLA   of imitation and RL. A growing body of work has devel-
+action, so that online RL refines promising behaviors rather  oped practical recipes for deploying RL on physical robots,
+than learning from scratch.                                     including autonomous data-collection pipelines [24], efficient
+  We evaluate RLT on four challenging robot manipulation   learning frameworks such as SERL [4, 25] and RL100 [5], and
+tasks that can require millimeter or sub-millimeter precision:   human-in-the-loop variants that allow operators to intervene
+screw  installation, zip  tie fastening, Ethernet, and charger  and provide corrections during autonomous execution  [4].
+insertion. Across these tasks, RLT improves both success rate   These systems have demonstrated that off-policy actor-critic
+and execution speed within a few hours of online training. The   methods, combined with demonstrations and human correc-
+largest gains appear in the critical phases of the tasks, which   tions, can solve contact-rich manipulation tasks within hours
+require high precision and determine task success, where RLT   of robot time. However, they typically train small policies from
+speeds up execution by up to 3× and substantially improves   scratch atop standard pretrained visual encoders (e.g., ResNet),
+success rates, for example from 20% to 65% for a challenging   forgoing the rich behavioral priors available in modern VLA
+screw-insertion task. On one of the most dexterous parts of   models. RLT bridges this gap by using a frozen VLA as
+our tasks, policies trained with our method can surpass expert   both the perceptual backbone and the behavioral prior for a
+teleoperation speed while maintaining reliability. These results   lightweight online RL policy.
+suggest that combining a VLA model with lightweight online   RL fine-tuning of VLA models. A rapidly growing line of
+RL offers a practical path to high-performance manipulation  work studies how to improve a pretrained VLA via RL. These
+without extensive task-specific engineering.                   approaches vary primarily in what is updated and how the RL
+                                                                  signal is incorporated. At one end of the spectrum, several
+                        II. RELATED WORK                    methods update the full VLA model. RECAP [3] trains the
+                                                                      entire π∗0.6 model end-to-end using offline RL via advantage-
+  Vision-language-action models. Behavioral cloning from   conditioned policy extraction: a distributional value function
+large demonstration  datasets has  recently emerged as  the   estimates per-timestep advantages, and the VLA  is trained
+dominant paradigm for training generalist robot manipulation  on all collected data—demonstrations, autonomous rollouts,
+policies (see e.g. [6–11]). Two critical ingredients that have  and human interventions—with an optimality indicator that
+enabled this success are action chunking [12], which predicts   upweights high-advantage actions. By iterating between on-
+multiple actions for sequential open-loop execution, and using   robot data collection and offline RL updates, RECAP more
+expressive output distributions, such as diffusion [13] or au-   than doubles throughput on complex long-horizon tasks such
+toregressive generation [6], that can capture the multimodality   as espresso making, laundry folding, and box assembly. Other
+inherent in demonstration data. A further advancement came  works apply proximal policy optimization (PPO) or variants
+from using large pretrained vision-language models as a back-   thereof to VLA fine-tuning (e.g. [1, 26, 27]), though on-policy
+bone for language-conditioned generalist  policies, yielding  methods are difficult to extend to real-world RL in a sample-
+vision-language-action (VLA) models [6, 7]. These models   efficient and scalable fashion. At the other end, lightweight
+import large web-scale prior knowledge into closed-loop robot  methods avoid updating the full VLA and instead train a small
+policies. Recent work has combined VLA backbones with   auxiliary module on top of the frozen model. ConRFT [28]
+chunked action generation, either via diffusion [8] or autore-   freezes the VLA encoder and fine-tunes an action head using a
+gressive tokenization [14, 15], achieving state-of-the-art gen-   consistency-based training objective together with a learned bi-
+eralist manipulation. While these policies exhibit impressive   nary reward classifier, but operates on single-step actions with-
+generalization capabilities [9, 16], their performance on any   out chunking on short-horizon tasks. Policy Decorator [29]
+given task is ultimately bounded by the quality and coverage   learns a residual policy whose output is scaled by a hand-tuned
+of the teleoperation data they were trained on—achieving   hyperparameter and added to the frozen VLA’s prediction, but
+reliable success on precision-critical tasks remains difficult   has been demonstrated only in simulation with high sample
+when demonstrations themselves are noisy or inconsistent.     requirements (on the order of millions of steps). Probe-Learn-
+  Real-world reinforcement learning. Reinforcement learn-   Distill (PLD) [30] pre-trains a critic with Cal-QL [31] on base-
+ing offers a natural way to go beyond the performance ceiling   policy rollouts and then learns a single-step residual policy on
+of demonstration data: by practicing on a task, the agent   top of the frozen VLA, optionally distilling the result back into
+can discover faster, more precise, or more robust strategies   the VLA via supervised fine-tuning. GR-RL [2] takes a multi-
+that were never demonstrated. In practice, real-world RL for   stage approach for specializing a generalist VLA on a long-
+robotics operates under tight sample budgets, since every robot   horizon shoe-lacing task: it first performs offline filtered BC,
+rollout costs time and wear. Off-policy actor-critic methods  and then performs online RL by learning a noise predictor that
+(e.g. [17–20]) address this by reusing transitions stored in a   steers the frozen VLA’s diffusion process in latent space [32].
+replay buffer, and sample efficiency can be pushed further by  DSRL [32] similarly operates in the diffusion noise space,
+increasing the update-to-data ratio [21], though regularization   learning a latent policy that modulates the denoising process
+
+===== Page 3 =====
+to steer actions toward high-return regions.                       trajectory distribution induced by policy π. We assume access
+  RLT shares with these methods the goal of improving   only to a sparse binary reward: a human supervisor labels the
+a pretrained VLA without the cost of full-model RL, but  end of each episode as success or failure, and we set rT = 1
+differs in several key design choices. First, RLT introduces   for success and rT = 0 otherwise. The action-value function
+an RL token—a compact readout representation trained to   of a policy π is Qπ(st, at) = Eτ∼ρπ hPTt′=t γt′−trt′   st, at i .
+compress the VLA’s internal embeddings—that serves as the     In our setting, both policies and critics operate over action
+state observation for a lightweight actor-critic, preserving the   chunks at:t+C−1 =  (at, . . . , at+C−1) ∈RC×d, where C
+VLA’s pretrained perceptual structure while enabling efficient   denotes the RL chunk length (and H  denotes the chunk
+online learning. Second, RLT operates over chunked actions   horizon predicted by the VLA). We choose C < H to give the
+aligned with the VLA’s native action interface, shortening   policy the ability to be more reactive. We define the chunked
+the effective decision horizon for temporal-difference learning   policy as π(at:t+C−1  | st) together with the corresponding
+under sparse rewards at high control frequencies—in contrast   chunk-level C-step estimate of the value Qπ(st, at:t+C−1) =
+to single-step methods [28–30] that face a much longer credit-  Pt+C−1t′=t   γt′−trt′ + γCEa′∼π|st+C [Qπ(st+C, a′)] . We build
+assignment problem. Third, rather than predicting residuals  on classic off-policy actor-critic methods [17, 19, 34] that
+or latent noise, the RLT actor is directly conditioned on the   jointly train a stochastic actor πθ and a critic Qψ. Crucially,
+VLA’s sampled reference action chunk and regularized toward                                                                learning  is  off-policy, using  transitions stored in a replay
+it, turning online RL into local refinement of a good VLA prior   buffer B, regardless of the policy that generated them. This
+behavior policy rather than unconstrained search or implicit   property is essential in our setting, where B aggregates data
+modulation of a diffusion process. Together, these choices  from the VLA policy, the RL learner, and human teleoperated
+enable sample-efficient online RL on real robots—improving   interventions.
+both success rate and execution speed within a few hours of
+practice.                                                          IV. REINFORCEMENT LEARNING FROM RL TOKEN
+                                                               Figure 1 summarizes our recipe for enabling fast and stable                        III. PRELIMINARIES
+                                                               online RL from pretrained VLA models with RLT. The core
+  Vision-language-action models. Large-scale VLA models
+                                                               idea is to maximally utilize the pretrained VLA to improve the
+learn manipulation behaviors from diverse human demonstra-
+                                                                    efficiency of the RL training process. Training the entire VLA
+tion datasets spanning tens of thousands of hours, in some
+                                                           with online RL could be too compute- and sample-inefficient
+cases augmented with non-robot vision-language data [7, 9,
+                                                                    to produce an improved policy in just a few hours. Instead,
+16]. A typical VLA comprises two components: (i) a VLM
+                                             we use the frozen VLA to provide the RL state representation,
+backbone,  i.e., a vision-language model that encodes multi-
+                                                                    to supply reference actions and to guide exploration toward
+modal inputs (images, language instructions, and propriocep-
+                                                                 actions close to its own predictions, while still using a small
+tive state) into a shared token sequence, and  (ii) an action
+                                                                  actor and critic network. We first adapt the VLA on a small
+expert, i.e., a diffusion-based module that attends to the back-
+                                                     amount of task-specific demonstration data, both to improve its
+bone tokens and generates continuous actions through iterative
+                                                                               initial task policy and to expose an RL token for downstream
+denoising. We build on the π0.6 model [33]. Given up to four
+                                                    RL. We then freeze the VLA and train lightweight off-policy
+camera images, a language instruction ℓ, and proprioceptive
+                                                                  actor and  critic networks online, conditioning on both the
+state spt, π0.6 produces an action sequence (referred to as                                         RL token representation and the VLA’s reference actions, and
+an action chunk): ˜at:t+H−1 =  (˜at, . . . , ˜at+H−1) ∈RH×d,
+                                                                  regularize the learned policy to stay close to the VLA model.
+a sequence of H =  50 actions corresponding  to 1 s of
+                                                   Our method turns online RL into local refinement of promising
+control. We write πvla for the chunked policy produced by                                                             behaviors rather than unconstrained search. This design gives
+the pretrained VLA. In practice, the robot executes only a
+                                                                 the online RL method the efficiency of a small actor-critic
+prefix of this chunk open loop (e.g., the first 20 steps) before
+                                                                algorithm, while retaining the representation and behaviors of
+re-planning from a new observation. Due to the difficulty of
+                                                                 the pretrained VLA model.
+some tasks (e.g., high-precision tasks) it can be challenging to
+collect large amounts of high-quality imitation learning data at   A. Adapting the VLA to expose an RL interface
+scale for them, limiting the VLA’s performance on these tasks.                                                                   Sample-efficient online RL depends critically on the choice
+This motivates the online RL refinement method we develop                                                               of state representation. Applying RL directly to the full VLA
+in the next section.                                                     model is a poor match for rapid real-world adaptation: the
+  Reinforcement learning and actor-critic methods. We                                                                 representation is high-dimensional, and online updates to the
+formulate robot control as a Markov decision process (MDP)                                                                 billion-parameter model are both computationally expensive
+(S, A, p, r, γ), where S  is the  state observation space, A                                                       and sample-inefficient. At the same time, we would like to
+is a continuous action space, p(st+1  |  st, at) denotes the                                                                          utilize the representation already contained inside a VLA after
+transition dynamics,  r(st, at)  is the reward  function, and                                                                    pretraining, since it was trained on large-scale web and robotic
+γ ∈[0, 1) is the discount factor. The goal of RL is to learn                                                               data and already contains information useful for generating
+a policy π(at  | st) that maximizes the expected discounted                                                                 actions for many tasks. However, it is generally not obvious
+return: J(π) = Eτ∼ρπ hPTt=0 γtrt i , where ρπ(τ) denotes the  which features from a transformer-based VLA make up a
+
+===== Page 4 =====
+RL token
+                                                               operation applied to VLA embeddings, then the autoregressive
+                     1 x 2048
+                                                                 reconstruction objective on the demonstrations D is given as:
+
+ er l                                           M
+                                                                                                                      2 i                                                                                                                                                                              .     (2)                                                                    hϕ dϕ([zrl, ¯z1:i−1]) i −¯zi           encoder               decoder                                   Lro = EDh X
+         transformer           transformer                                           i=1
+                                          We train the parameters ϕ on a small task-specific demon-
+                                                                      stration dataset with the VLA considered frozen with respect
+                                                    action chunk
+                                                                    to Lro, and (optionally) combine it with supervised fine-tuning
+                 image embeddings                                                                             -1.7   1.25   3.14   1.42     of the VLA (θvla). Afterwards, both θvla and ϕ are frozen, and
+                     N x 2048                                                               online RL operates on the RL token representation zrl.
+
+                                                             B. Online RL to refine VLA action chunks
+                                       π0.6 vla                         action expert         After the initial adaptation stage we freeze both the VLA
+  pre-trained VLM: SigLIP (400M) + Gemma (4B)          (860M)        and the RL token representation. We then train lightweight
+                                                                  actor (πθ) and critic (Qψ) networks online. Their inputs x
+                                                      combine the RL token with any additional information useful
+                              “insert“insert screw”screw”                          to enable closed-loop control (e.g. the proprioceptive state of
+                             “fold laundry”                          the robot). The critic model estimates the value of the state
+                                                       noise
+                                  promptsprompts                        and action: Qψ(x, a1:C) ∈R. Notably, rather than generating
+                                                                 actions from scratch, the RL actor πθ(·|x, ˜a1:C) is trained to
+Fig. 2: Details on RL token extraction. RLT adds an encoder-decoder   refine action sequences ˜a1:C (referred to as action chunks)
+transformer to a pretrained VLA.  It produces a compressed embedding of   proposed by the VLA.
+the VLA representation (the RL token). This representation then enables data
+and parameter efficient fine-tuning during online RL.                     Training the critic. Our critic Qψ(x, a1:C) takes as input
+                                                                 the  state and the action chunk a1:C. We  train the  critic
+                                                           with standard off-policy temporal-difference learning on action
+good representation for online RL and the embeddings in each  chunk transitions sampled from the replay buffer B:
+transformer layer are high-dimensional. Our goal therefore is                                                                                h                 2i                                             LQ = E(x,a1:C,x′)∼B   ˆQ −Qψ(x, a1:C)     ,to compress the VLA representation into a compact embedding
+for RL that preserves task-relevant information while remain-             C                                            (3)
+ing small enough for lightweight online actor-critic learning.             ˆQ = X γt′−1rt′ + γCEa′∼πθ h Qψ′(x′, a′)i .
+  We achieve this by adding an RL token (Fig. 2): a learned                  t′=1
+readout embedding that summarizes the VLA’s knowledge into  where the input state  is x =  (zrl, sp), and sp denotes the
+a small vector serving as the RL state. Concretely, we obtain   proprioceptive state information, zrl(s) denotes the RL token
+the RL token from a small additional transformer that we   extracted for state s; x′ denotes the next input state; a′ ∼πθ
+add to the pretrained VLA. We train this transformer in an   denotes taking a sample from the RL policy. In practice, we
+encoder-decoder [35] fashion, with the last input to the encoder   follow TD3 [19] and ψ′ are the parameters of the target
+being the RL token. Because the representation for the RL   network.
+token must retain enough information to enable the decoder     Training the RL Policy. Our actor network πθ(·|x, ˜a1:C)
+to reconstruct the inputs,  it acts as a bottleneck. Let z =   produces a Gaussian action distribution over action chunks. It
+f(s, ℓ; θvla) denote the final-layer token embeddings produced   takes in the input state and a reference action chunk ˜a1:C, and
+by the pretrained VLA for state s and language instruction   produces the action distribution:
+ℓ. The embeddings z decompose into z1:M = {z1, . . . , zM},
+where each zi corresponds to the embedding for one input          πθ a1:C | x, ˜a1:C = N  µθ x, ˜a1:C  , σ2I  ,      (4)
+token. We append a learned embedding erl = eϕ(<rl>)
+                                                           where, as before, x = (zrl, sp). Conditioning on ˜a exposes theto the sequence and process the augmented sequence with a
+                                                                  actor directly to the VLA’s predicted actions, so that online
+lightweight encoder transformer gϕ. The encoder output at the
+                                         RL refines a strong initial proposal rather than learning fromspecial-token position, denoted as zrl, is our RL token1
+                                                                     scratch. A second benefit is that the sampled reference chunk
+                      zrl = gϕ [z1:M, erl] M+1 .              (1)   preserves mode information from the VLA’s multimodal action
+                                                                       distribution, which would otherwise be difficult for a unimodal
+A decoder transformer dϕ with a linear output projection                                                          Gaussian actor to recover [36]. We further stabilize learning by
+hϕ is then trained to autoregressively reconstruct the original                                                                  regularizing its action toward the reference action. Concretely,
+embeddings from zrl. Let ¯zi = sg(zi) denote the stop-gradient  we optimize the actor to maximize critic value while staying
+                                                                close to the VLA reference chunk ˜a, similar in spirit to KL-
+  1In our experiments each task has a fixed language instruction, so we
+drop language embeddings in this step; the construction applies to all VLA   regularized RL methods (see e.g. [20, 37–40]). This effectively
+embeddings in general.                                               turns online RL into local action editing around the VLA
+
+===== Page 5 =====
+generated action  distribution, rather than an unconstrained  Algorithm 1 RLT
+search over high-dimensional action chunks. The objective for   Require: Frozen VLA backbone fθvla and VLA action distri-
+learning the RL policy is given as                                 bution πvla; demo data D, chunk length C, replay buffer
+                                                            B,                                                      warmup                                                                                                    ratio G, VLA fine-tuning weight                                                                                   steps Nwarm,                  h
+            s∼B  Lπ(θ) = E               −Qψ(x, a1:C) + β ∥a1:C −˜a1:C∥22 i ,                                                               α, policy                                                                                constraint                                                                                    β.            a1:C∼πθ
+               ˜a1:C ∼πvla(· | s, ℓ),                                           1: Train RL token and (optionally) fine-tune the VLA
+                                                              (5)      2: Train ϕ using zi = fi(s, ℓ, θvla), zrl = gϕ([z1:M, erl])M+1,
+where the coefficient β controls how strongly the actor  is      and θvla (only if α > 0).
+regularized towards the sampled VLA action.                      M
+  Reference action dropout. A practical failure mode of                                                                                                                                                                                   .                                                                  Lro(ϕ) = EDh X hϕ dϕ([zrl, ¯z1:i−1]) i −¯zi  2 i
+reference-action conditioning is that the actor may simply copy                        i=1
+˜a instead of learning to improve  it. This is especially likely
+before the critic becomes informative, since both conditioning      3:
+on  ˜a and  regularizing towards  it encourage  the  actor  to                ϕ, θvla = arg min Lro(ϕ) + αLvla(θvla)
+                                                                                                                                   ϕ,θvla
+remain close to the VLA proposal. To prevent this, we apply
+reference action dropout: for a random subset of transitions
+                                                                                       4: Train RL actor and criticin each training batch, we replace the reference chunk with
+                                                                                       5: Initialize critic Qψ and RL Policy πθ.zeros before passing it to the actor. This forces the actor to
+                                                                                       6: for environment steps t = 0, C, 2C . . .  domaintain an independent action-generation pathway, while still
+allowing it to exploit the VLA action distribution whenever the      7:   Sample VLA reference chunk ˜at:t+C−1 ∼πvla(st).
+reference chunk is present. In practice, once the critic provides      8:   Form RL state xt = (zrl(st), spt ).
+                                       ahuman                if interventionuseful signal, the actor naturally learns to deviate from the                                       reference whenever doing so increases predicted value.              9:   at:t+C−1 ←   ˜at:t+C−1            if t < Nwarm
+                                       ∼πθ( · | xt, ˜a )  otherwise               V. THE COMPLETE SYSTEM
+                                                                              10:   Execute at:t+C−1 and observe rt, st+1, spt+1
+  Algorithm 1 summarizes our full training loop. After an                                                                              11:    ˜at:t+C−1 ←ahuman   if intervention
+initial warmup stage to collect episodes with the base VLA                                                                              12:    Store transition in B:  ⟨xt, at:t+C−1, ˜a, rt, xt+1⟩
+policy, training alternates between collecting experience on                                                                              13:    for g = 1, . . . , G do
+the robot and performing off-policy actor-critic updates from                                                                              14:     Sample batch of data b ∼B.
+replay. The replay buffer aggregates VLA warmup data, online                                                                              15:     Compute target Q values
+RL rollouts, and optional human interventions. In addition, a
+                                                            C
+human supervisor provides sparse success/failure labels. The
+                                                                                 ˆQ = X γt′−1rt′ + γCEa′∼πθ Qψ′(x′, a′)steps are described in detail below.
+                                                                                      t′=1
+  Warmup.  After  training  the RL  token  representation
+(Sec. IV-A), we pre-fill the replay buffer B by rolling out the    16:      Train Critic with TD backup (Eq. (3))
+VLA reference policy for Nwarm environment steps. This gives
+                                                                                    h               2ithe critic an initial learning signal and ensures that online RL                LQ(ψ) = Eb  ˆQ −Qψ(x, a)
+begins from competent VLA behavior.
+  Rollout. At each action chunk boundary during online
+                                                                              17:      Train Policy a ∼πθ(· | s, ˜a) (Eq. (5))
+collection, the frozen VLA produces a reference chunk ˜a1:H
+and the RL token module extracts zrl. The actor then outputs               Lπ(θ) = Eb h −Qψ(x, a) + β∥a −˜a∥22 i
+an action chunk a1:C ∼πθ(· | x, ˜a1:C). To accelerate learning
+of contact-rich or safety-critical behaviors, a human operator    18:   end for
+may optionally intervene by providing teleoperated commands    19: end for
+ah1:C that overwrite the actor output for the duration of the
+intervention. When this occurs, the intervention replaces the
+VLA reference in the replay buffer. In all cases, each transition    , < x4, a4:C+4 >, . . .  to the replay buffer. Note that, due
+stored in B includes the executed action and the corresponding   to the off-policy nature of our RL algorithm we can use all
+reference, enabling the actor to learn from both autonomous   action chunks (including VLA-generated actions and human
+rollouts and human corrections.                                   interventions).
+  Subsampling Action Chunks. While the RL policy uses     Update. Policy updates are performed off-policy from the
+an action chunk length of C, we obtain observations for each   replay buffer according to Algorithm 1. To remain compute
+intermediate step. We can thus increase data and improve  and time-efficient during training, we perform the rollouts and
+learning  efficiency by  storing  intermediate  steps  into  the   learning asynchronously. In practice, we perform two critic
+replay  buffer. Concretely we pick a  stride of 2 and save   updates for each actor update, and begin learning shortly after
+transitions corresponding to < x0, a0:C >, < x2, a2:C+2 >   the warmup phase. We use a high update-to-data ratio of 5,
+
+===== Page 6 =====
+Fig. 3: The tasks in our experiments: each task contains a critical phase that requires high precision: (top) using a screwdriver to install a screw, (middle)
+fastening a zip tie, (bottom) plugging in an Ethernet cable and plugging in a charger.
+
+
+
+which is essential in the low-data online regime.               motivate the method: limited robot interaction time, sparse
+  Targeted improvement of critical phases. For practicality  human supervision, and lightweight online learning.
+and efficiency of learning, we apply RLT to improve the   We structure the evaluation around the following questions:
+critical phase of each task we consider – corresponding to the  Q1. Can RLT improve manipulation performance over the
+most difficult sections which require high-precision – and let       base VLA model?
+the base VLA perform the easier parts of the task. Concretely,  Q2. How does RLT compare to alternative RL approaches on
+each episode starts by executing the base model. During data        these tasks?
+collection, a human operator can then choose at which point  Q3. How much does each component of the method—the
+to hand the control from the base VLA to the RL policy. This     RL token, chunked action prediction, policy regulariza-
+is analogous to human intervention decisions in interactive         tion, and reference-action pass-through—contribute to the
+imitation learning [41]. Our system then applies RL to the       method’s performance?
+chosen task segment, storing and training on transitions during  Q4. Does RLT enable the policy to discover a better strat-
+this critical phase, until receiving a terminal signal from the       egy and how does its strategy compare to the original
+human operator that indicates success or failure of the RL task.       demonstration data?
+This concentrates data collection and credit assignment on the
+part of the behavior where online adaptation matters most. To   A. Tasks and Setup
+enable autonomous execution at test time, we can conclude                                          We evaluate our method on the following tasks (Fig. 3):
+training with a final short fine-tuning phase of the VLA where
+                                                                • Screw installation. The robot must use an electric screw-
+we ask it to additionally predict when to hand over execution
+                                                                      driver to drive an M3 screw into a threaded receptacle. This
+to the RL policy (using the human interventions as labels).
+                                                                    requires sub-millimeter alignment between the screw head
+We can then automatically trigger the switch of policies at
+                                                         and screwdriver tip. The task is especially difficult because
+test-time.
+                                                                      (1) the screw may not always sit perfectly upright, (2) when
+                                                               holding the screwdriver, any rotation of the end effector is
+           VI. REAL-WORLD EXPERIMENTS
+                                                                 amplified by the 10 cm distance between the screwdriver tip
+  We evaluate RLT on four real-world manipulation tasks    and the grasp point, and (3) critical visual cues are visible
+that require dexterous control and sub-millimeter precision.     primarily from the wide-angle wrist camera on the opposite
+A pretrained VLA provides a strong initialization for most     arm, presenting a challenging perceptual problem.
+parts of these tasks, but success and speed ultimately depend   • Zip  tie fastening. The robot must thread a zip  tie  tail
+on refining the critical contact-rich phase that demands the     through  its narrow locking  slot. This task involves co-
+most precision. Our experiments test whether our method can     ordinated bimanual control of a deformable object with
+deliver such improvements under the practical constraints that      tight tolerances. Successful insertion requires inferring the
+
+===== Page 7 =====
+position of the tip and slot solely from the wrist cameras   robot runs  at a  control frequency of 50 Hz. With a 14-
+  and executing with millimeter precision.                    dimensional per-timestep action space, this corresponds to a
+• Ethernet insertion. The robot must insert an Ethernet con-   140-dimensional chunked action for the RL actor. We provide
+  nector into a recessed port. This requires accurate positional  more implementation details in App. B.
+  and angular alignment, followed by a firm and decisive
+                                                             B. Baselines and Ablations  insertion motion. Small orientation errors or hesitant contact
+  typically cause the connector to catch on the housing rather   We start from a pretrained VLA model π0.6 [33]. For each
+  than insert into the port, making success sensitive to both   task, we collect 1–10 hours of teleoperated demonstrations. We
+  precision and contact dynamics.                             then fine-tune the VLA model while training our RL token
+• Charger  insertion. The robot must  align and  insert a   representation. This produces the base VLA policy that we
+  charger into a power strip. The task is difficult because the   use throughout all of the experiments. We run RL training
+  policy must achieve centimeter-level alignment while not   for between 400 and 1000 episodes depending on the task
+  always having clear observability of the prongs and socket.   difficulty. Excluding reset and various overhead, each of the
+  Small alignment errors often lead to repeated probing or   experiments produces approximately 15 minutes to 5 hours of
+  failed insertion attempts.                                       actual robot data. We measure the performance in terms of the
+                                                              success rate on each task, judged by a binary reward signal
+  Each task includes grasping, repositioning, and alignment,
+                                                      from a human operator. We also report throughput, the number
+and spans 30–120 s  (at 50 Hz roughly 1500–6000 control
+                                                               of successful task completions per 10 minute interval, in order
+steps). For each  task, we identify the  critical phase—the
+                                                                    to evaluate improvements in terms of both robustness and
+insertion,  fastening,  or  rotation segment—where  precision
+                                                               speed. We evaluate all tasks on their critical phases, and we
+requirements are the highest and where the base VLA most
+                                                                evaluate the two harder tasks—the screw and zip tie tasks—in
+frequently slows down or fails. These phases typically last
+                                                                 the full-task setting.
+5–20 s (250–1000 control steps).
+                                          We compare RLT to four baseline methods that improve
+  Critical-phase evaluation.  Since our method is designed
+                                                                    policies from experience. For fair comparisons, we train each
+to improve exactly these critical phases, we  first focus our
+                                         RL method with the same amount of data (see App. C).
+evaluation on comparing methods and ablations only on the
+                                                                • HIL-SERL [4]: Like our method, HIL-SERL trains a smallcritical phase. In this setting, episodes begin after being reset to
+                                                                    actor and critic with a combination of experience and inter-a partially completed task state right before the critical phase,
+                                                                    ventions, but unlike RLT,  it does not use representationsusing a slightly randomized set of initial configurations. For
+                                                        from a pretrained VLA, instead using a simple ResNetexample, in zip tie fastening, the robot begins already holding
+                                                            encoder pretrained for standard computer vision tasks.the two ends of the zip tie before the insertion attempt begins.
+This setup isolates the precision-critical segment where RL   • Probe-Learn-Distill [30]: PLD learns a residual policy that
+is expected to matter most, and reduces confounding variance     outputs a residual for each single-step action. It scales the
+from earlier phases of the task, such as grasping and transport,     residual by a hyperparameter and sums it with one step from
+which are already handled reasonably well by the base VLA.     the frozen VLA’s action prediction to execute.
+Each agent  is evaluated over 50 episodes per task in this   • DSRL  [32]: DSRL  learns an online RL policy  in  the
+controlled setting.                                                      latent noise space of a flow VLA model.  It “steers” the
+  Full-task evaluation.  Controlled critical-phase evaluation   VLA action generation by selecting the noise to feed into
+is  useful  for  isolating  the bottleneck  that our method  is     the frozen VLA model’s action generator. This method
+designed to improve, but it does not capture the full variability     implicitly constrains exploration to those actions that can
+of long-horizon execution. We therefore additionally evaluate    be generated by the VLA, and explores among its modes.
+full-task performance in a more realistic setting, where the   • DAgger [41, 42]: We fine-tune the base VLA model on the
+robot  starts from  its “home position”, executes the earlier    human intervention data collected during our training.
+stages of the task with the base policy, and enters the critical                                        We also isolate the contribution of each component of our
+phase under the state variation induced by that execution. This                                                     method by removing them individually:
+setting is substantially harder, since the RL-improved behavior
+                                                                • w/o RL  token: Replace  the RL token with a  frozen,must remain effective under the broader distribution of states
+                                                       ImageNet pretrained ResNet-10 encoder from [25].produced by the preceding policy. For the full-task training,
+we start by having RL focus on the critical phase with small   • w/o Chunk: The RL policy outputs single-step actions
+randomization, and then move on to the full-task setting.       (C=1) instead of action chunks. Because this policy needs
+                                                                      to run at 50 Hz and querying the base VLA model at 50 Hz  Experiment  Details.  The RL policy inputs consist of
+                                                       would be infeasible, we have to replace the RL token withthe RL token (produced from two wrist camera images and
+                                                                   the ResNet-10 encoder.one base-camera image), and additional proprioceptive state.
+Depending on the task, this auxiliary state may include joint   • w/o BC Regularizer: Set β=0 in Eq. (5); the policy is
+position  (screw),  end-effector pose  (zip  tie, Ethernet and     trained with the Q-function alone.
+charger). We use π0.6 [33] as the base VLA policy. The   • w/o Pass-Through: Remove  ˜a from the policy input in
+
+===== Page 8 =====
+Base Policy        RLT (Ours)
+                      Full-Task
+                                                                                                                                    450       Mins)
+        18                             15                             45                            120                                                            600
+
+                                                                                                                                    300
+        12                             10                             30                             80                                                            400                  (Successes/10         6                              5                             15                             40                            150                            200
+
+
+         0                              0                              0                              0                              0                              0              Throughput       Screwdriver                 Zip Tie                 Screwdriver                 Zip Tie                   Ethernet                   Charger
+
+Fig. 4: RLT increases throughput significantly over the base VLA policy, improving both the speed and consistency of the critical phase of each task. The
+improvement is especially pronounced for the harder tasks where the VLA policy is prone to making mistakes.
+
+
+                                                                     Base Policy        RLT (Ours)
+                   Full-Task
+
+      100%                           100%                           100%                           100%                           100%                           100%
+
+
+       75%                            75%                            75%                            75%                            75%                            75%   Rate
+
+       50%                            50%                            50%                            50%                            50%                            50%
+     Success
+       25%                            25%                            25%                            25%                            25%                            25%
+
+
+        0%                             0%                             0%                             0%                             0%                             0%
+            Screwdriver                 Zip Tie                 Screwdriver                 Zip Tie                   Ethernet                   Charger
+
+Fig. 5: RLT can boost success rates across multiple tasks. Where the VLA is already competent (e.g., the Ethernet task) it maintains success rate and
+increases throughput. For tasks that are challenging for the base VLA policy (screwdriver and zip tie) RLT leads to a significant improvement in success.
+
+
+            Insert Ethernet                   Insert Ethernet          is more pronounced on the harder zip  tie and screwdriver
+               Base Policy
+    100%                                                                           Mins)                                 tasks. In the full-task evaluation, overall success rates are
+                                                           lower due to compounding errors from earlier parts of the
+ Rate 75%                                             300                            task (grasping/lifting objects etc.), but RLT still improves the
+                                                              success rate by 40% on the screwdriver task and 60% on the
+     50%                                                                                                                                                                                                                                      (Successes/10                              zip tie task.  Success                                                 150
+     25%                                               Q2: How does RLT compare to alternative methods?
+                                                As shown in Fig. 6, RLT results in a significant boost to      0%                                                                                                                                                     Throughput  0                                                            throughput compared to baselines. We compare against four
+          DAgger  HIL-   PLD   DSRL   RLT                 DAgger  HIL-   PLD   DSRL   RLT
+                 SERL               (Ours)                       SERL               (Ours)     baselines on the Ethernet task. HIL-SERL and PLD—both
+Fig. 6: Comparison to other RL algorithms. We compare RLT against   single-step online RL methods—fail to learn effectively on
+several baselines from the recent RL literature. Methods that consider only   this task, which spans hundreds of steps with a sparse reward.
+single actions, rather than action chunks, (HIL-SERL, PLD) perform poorly.   Without action chunking, the horizon of the task is very long,
+DSRL leads to high success but significantly lags behind in throughput.
+                                                       and the value function updates are ineffective at propagating
+                                                                 the sparse reward signal. For this simpler task, DAgger and
+                                         DSRL achieve success rates comparable to RLT (Fig.  6),
+  Eq. (4); the RL actor generates actions from state and RL
+                                                               but provide significantly less improvement in terms of speed.
+  token alone.
+                                                  DAgger is an imitation learning method, and is limited to the
+C. Experimental Results                                    speed of the human demonstrations and interventions. DSRL
+                                                                               is an RL method that strongly constrains the policy to remain  Q1: Does online RL improve over the base VLA policy?
+                                                                close to the base VLA, providing stable training but com-We evaluate our method in two regimes: the controlled setting
+                                                                   paratively less potential for improvement. In contrast, RLTthat isolates the critical phase and the full-task setting that
+                                                        matches the base policy’s high success rate while reducingrequires the RL policy to be more robust. Online RL improves
+                                                 mean steps to completion by 2× over the base policy.success rate and execution speed of the base model in both
+settings. In the controlled setting, RLT consistently improves    Q3: How much does each component contribute? All four
+the critical phase of all four tasks. Even on the relatively easier   design choices—RL token, action chunks, the BC regularizer,
+charger and Ethernet tasks, where the base policy already  and reference-action pass-through—contribute meaningfully.
+achieves good reliability, the policy learned by RLT is about  We validate that each component of our recipe provides a
+3× faster in the  critical phase. The boost to success rate   positive contribution (Fig. 7): replacing the RL token with a
+
+===== Page 9 =====
+Mins) 400       RLTBase(Ours)Policy                                                                          30
+             w/o                  Pass-Through
+             w/o                RL Token                                                                         25               RLTmedian=66(Ours)      Teleopmedian=146      Basemedian=228Policy                                                                                                       (%)    300       w/o Chunk
+             w/o BC Regularizer                                                                    20
+
+    200                                                                                          15  (Successes/10                                                                                                                                                                                                                                                                                                                                                        Percentage 10
+    100
+                                                                                                 5
+
+      0                                                                                           0  Throughput       0                             5                             10                            15             0        50       100       150       200       250       300       350       400
+                                 Minutes of Data                                                          Episode Length (timesteps)
+
+Fig. 7: Throughput at different points in training for Ethernet task.    Fig. 9: Speed on the Ethernet task. RLT significantly improves the speed
+The ablation study shows that each part of our method  is important for    of the Ethernet task. The final policy is faster even than the demonstrations
+good performance, and the full system learns fastest and performs best at   produced by expert teleoperators, and significantly faster than the base VLA
+the end. Notably, RLT outperforms the alternative policy after consuming   model. Half of the RL episodes during the critical insertion phase (yellow)
+only 5 minutes of data on the critical part of the task (total experiment time    are faster than all of the teleoperated demonstrations (green).
+∼40mins). Dropping the reference action from the actor input (“w/o Pass-
+Through”) still allows reaching the best final performance, but at the cost of
+slower learning and significantly more failures over the course of training.
+                                       VLA frequently exhibits “probing” behavior near contact:  it
+                                                           approaches the target, retreats slightly, readjusts, and attempts
+    1.0                                                  again—sometimes cycling through several such attempts be-
+    0.8                                                             fore succeeding. RLT instead approaches the port, and inserts
+ Rate 0.6                                                             the connector in a fluid motion. Even when  it fails on the
+                                                                          RLT (Ours)             first attempt, RLT applies pressure and wiggles the connector
+    0.4                                                                Base Policy                                                                      slightly to exploit compliance, leading to faster insertion. This Success                                                                     w/o Pass-Through
+                                                                        w/o                                                                       RL                                                                                 Token        behavior is not seen in the demonstration data and emerges    0.2                                                                        w/o                                                                      Chunk
+                                                                        w/o BC Regularizer    purely from online exploration, illustrating that the method
+    0.0
+           0                             5                             10                            15    can go beyond imitating human strategies.
+                                 Minutes of Data
+
+Fig. 8: Success rate evaluation during training for the Ethernet task. RLT                      VII. CONCLUSION
+quickly matches the success rate of the VLA policy on the Ethernet insertion
+task, while boosting throughput. Not using the reference-action pass-through   We presented RLT, a method for fast online RL on top
+or not using the RL token leads to slower learning.
+                                                               of representations extracted from a large pretrained VLA.
+                                             By training the VLA to expose a compact representation,
+                                                           our method enables a lightweight actor and critic to improve
+ResNet-10 encoder reduces throughput by 50%, confirming   highly precise and delicate tasks with just a few hours of real-
+that our token encodes manipulation-relevant structure that   world practice. Across four difficult tasks that require precision
+an off-the-shelf encoder trained on standard computer vision  and speed, RLT consistently improves both the success rate
+tasks does not provide. Replacing chunks (C=10) with single-  and execution speed, achieving up to 3× speedup on the hard-
+step actions dramatically increases the effective horizon of   est phase of each task and, in some cases, surpassing expert
+the task, since the value function needs to perform credit  human teleoperation speed through strategies that emerge from
+assignment over a much longer horizon. It also would make   online RL.
+it infeasible to run our method with the RL token. In practice,     While RLT provides  fast and efficient learning,  it does
+the single-step variant cannot reliably match the base policy   require additional human intervention during training to pro-
+performance. Removing the BC regularizer (β=0) causes the   vide reward signals, intervention corrections, and switching
+largest single drop in performance, since it forces the actor to   between RL (for the critical phase) and the base policy (for the
+explore the full action space with only gradients from the Q-   other phases). In principle, some of these components can be
+function. Removing the reference-action pass-through slows   automated, for example by using reward models and progress
+down learning, leads to early exploration drift, and occasion-   prediction. Developing a fully autonomous RL improvement
+ally degenerate behaviors. This ablation does eventually match   pipeline based on RLT  is a promising direction for future
+the performance of RLT for this simpler task, but experiences   work. More broadly, we believe that our method represents
+more  failures during the training process, as seen on the   an important step toward robotic systems that not only learn
+learning curve in Fig. 7.                                  from demonstration data, but can improve directly on the
+  Q4: Does RLT lead to more effective emergent strate-   job. When improvement  is  fast and  reliable,  it  is enough
+gies? Beyond aggregate metrics, the effect of online RL is   for the pretraining phase of the VLA to simply provide a
+a  qualitative change  in how the robot performs the  task.  good initialization for downstream exploration, while the most
+On the critical phase for the Ethernet task, we visualize the   successful and performant strategy can be discovered through
+distribution of speeds for the teleoperated demonstrations,   reinforcement learning. We hope that RLT will serve as a step
+the base policy, and the final RL policy (Fig. 9). The base   toward this future.
+
+===== Page 10 =====
+ACKNOWLEDGMENTS                            Zitkovich. Rt-2: Vision-language-action models transfer
+  Robotics  is a team effort. We are grateful to  all of the      web knowledge to robotic control.  In arXiv preprint
+people at Physical Intelligence who contributed to the many        arXiv:2307.15818, 2023. 2
+facets of this work, including hardware, data collection, robot    [7] Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted
+operations, and robot infrastructure. We thank Liam Murphy        Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov,
+and Cameron Myers for their help on the gripper design. We       Ethan Foster, Grace Lam, Pannag Sanketi, et al. Openvla:
+thank the robot operators and the operation and annotation      An open-source vision-language-action model.   arXiv
+                                                                       preprint arXiv:2406.09246, 2024. 2, 3team at PI. We thank Connor Jacobsen for help with the
+website and blog post, Brian Ichter for help with figures,    [8] Physical  Intelligence.   π0: A  vision-language-action
+Kyle Vedder for proofreading, Claudio Guglieri for help with        flow model for general robot control.  arXiv preprint
+visualizations  for  the blog  post, and Donald Jewkes and        arXiv:2410.24164, 2024. 2
+Thomas Burton for help with filming and editing of the video.    [9] Gemini Robotics Team, Saminda Abeyruwan, Joshua
+                                                                         Ainslie,  Jean-Baptiste  Alayrac,  Montserrat  Gonzalez
+                 REFERENCES                                                                 Arenas, Travis Armstrong, Ashwin Balakrishna, Robert
+ [1] Haozhan Li, Yuxin Zuo, Jiale Yu, Yuhao Zhang, Zhao-        Baruch, Maria Bauza, Michiel  Blokzijl, Steven Bo-
+     hui Yang, Kaiyan Zhang, Xuekai Zhu, Yuchen Zhang,        hez, Konstantinos Bousmalis, Anthony Brohan, Thomas
+     Tianxing Chen, Ganqu Cui, Dehui Wang, Dingxiang Luo,       Buschmann, Arunkumar Byravan, Serkan  Cabi, Ken
+    Yuchen Fan, Youbang Sun, Jia Zeng, Jiangmiao Pang,        Caluwaerts, Federico Casarini, Oscar Chang, Jose En-
+    Shanghang Zhang, Yu Wang, Yao Mu, Bowen Zhou, and        rique Chen, Xi Chen, Hao-Tien Lewis Chiang, Krzysztof
+    Ning Ding.  Simplevla-rl: Scaling vla training via rein-       Choromanski, David D’Ambrosio, Sudeep Dasari, Todor
+     forcement learning.  arXiv preprint, arXiv:2509.09674,       Davchev, Coline Devin, Norman Di Palo, Tianli Ding,
+     2025. 1, 2                                                  Adil Dostmohamed, Danny Driess, Yilun Du, Debidatta
+ [2] Yunfei Li, Xiao Ma, Jiafeng Xu, Yu Cui, Zhongren Cui,       Dwibedi, Michael Elabd, Claudio Fantacci, Cody Fong,
+     Zhigang Han, Liqun Huang, Tao Kong, Yuxiao Liu, Hao        Erik Frey, Chuyuan Fu, Marissa Giustina, Keerthana
+     Niu, Wanli Peng, Jingchao Qiao, Zeyu Ren, Haixin Shi,        Gopalakrishnan, Laura Graesser, Leonard Hasenclever,
+     Zhi Su, Jiawen Tian, Yuyang Xiao, Shenyu Zhang, Liwei        Nicolas Heess, Brandon Hernaez, Alexander Herzog,
+     Zheng, Hang Li, and Yonghui Wu. Gr-rl: Going dexter-       R. Alex Hofer, Jan Humplik, Atil Iscen, Mithun George
+     ous and precise for long-horizon robotic manipulation,        Jacob, Deepali Jain, Ryan Julian, Dmitry Kalashnikov,
+     2025. URL https://arxiv.org/abs/2512.01801. 2             M. Emre Karagozler, Stefani Karp, Chase Kew, Jerad
+ [3] Physical Intelligence.  π∗0.6: a VLA That Learns From        Kirkland, Sean Kirmani, Yuheng Kuang, Thomas Lampe,
+     Experience, 2025. URL https://arxiv.org/abs/2511.14759.       Antoine Laurens,  Isabel  Leal, Alex X. Lee, Tsang-
+      1, 2                                               Wei Edward Lee, Jacky Liang, Yixin Lin, Sharath Maddi-
+ [4] Jianlan Luo, Charles Xu, Jeffrey Wu, and Sergey Levine.         neni, Anirudha Majumdar, Assaf Hurwitz  Michaely,
+     Precise and dexterous robotic manipulation via human-       Robert Moreno, Michael Neunert, Francesco Nori, Car-
+     in-the-loop  reinforcement  learning.    arXiv  preprint        olina Parada, Emilio Parisotto, Peter Pastor, Acorn Poo-
+     arXiv:2410.21845, 2024. 1, 2, 7                                      ley, Kanishka Rao, Krista Reymann, Dorsa Sadigh, Ste-
+ [5] Kun Lei, Huanyu Li, Dongjie Yu, Zhenyu Wei, Lingxiao        fano Saliceti, Pannag Sanketi, Pierre Sermanet, Dhruv
+    Guo, Zhennan  Jiang, Ziyu Wang, Shiyu Liang, and       Shah, Mohit Sharma, Kathryn Shea, Charles Shu, Vikas
+    Huazhe Xu.  Rl-100: Performant robotic manipulation       Sindhwani, Sumeet Singh, Radu Soricut, Jost Tobias
+     with real-world reinforcement  learning, 2026.  URL        Springenberg, Rachel Sterneck, Razvan Surdulescu, Jie
+     https://arxiv.org/abs/2510.14830. 1, 2                          Tan, Jonathan Tompson, Vincent Vanhoucke, Jake Varley,
+ [6] Anthony Brohan, Noah Brown, Justice Carbajal, Yevgen       Grace Vesom, Giulia Vezzani, Oriol Vinyals, Ayzaan
+     Chebotar, Xi Chen, Krzysztof Choromanski, Tianli Ding,       Wahid, Stefan Welker, Paul Wohlhart, Fei Xia, Ted
+    Danny Driess, Avinava Dubey, Chelsea Finn, Pete Flo-        Xiao, Annie  Xie, Jinyu  Xie, Peng Xu, Sichun Xu,
+     rence, Chuyuan Fu, Montse Gonzalez Arenas, Keerthana       Ying Xu, Zhuo Xu, Yuxiang Yang, Rui Yao, Sergey
+     Gopalakrishnan, Kehang Han, Karol Hausman, Alex       Yaroshenko, Wenhao Yu, Wentao Yuan, Jingwei Zhang,
+     Herzog, Jasmine Hsu, Brian Ichter, Alex Irpan, Nikhil       Tingnan Zhang, Allan Zhou, and Yuxiang Zhou. Gemini
+      Joshi, Ryan Julian, Dmitry Kalashnikov, Yuheng Kuang,         robotics: Bringing ai into the physical world, 2025. URL
+     Isabel Leal, Lisa Lee, Tsang-Wei Edward Lee, Sergey        https://arxiv.org/abs/2503.20020. 2, 3
+     Levine, Yao Lu, Henryk Michalewski, Igor Mordatch,   [10] Hongtao Wu, Ya Jing, Chilam Cheang, Guangzeng Chen,
+     Karl Pertsch, Kanishka Rao, Krista Reymann, Michael        Jiafeng Xu, Xinghang Li, Minghuan Liu, Hang Li, and
+    Ryoo, Grecia Salazar, Pannag Sanketi, Pierre Sermanet,       Tao Kong. Unleashing large-scale video generative pre-
+     Jaspiar Singh, Anikait Singh, Radu Soricut, Huong Tran,         training for visual robot manipulation, 2023.
+     Vincent Vanhoucke, Quan Vuong, Ayzaan Wahid, Ste-   [11] NVIDIA,  :, Johan Bjorck, Fernando Casta˜neda, Nikita
+     fan Welker, Paul Wohlhart,  Jialin Wu, Fei Xia, Ted        Cherniadev, Xingye Da, Runyu Ding, Linxi ”Jim” Fan,
+     Xiao, Peng Xu, Sichun Xu, Tianhe Yu, and Brianna      Yu Fang, Dieter Fox, Fengyuan Hu, Spencer Huang,
+
+===== Page 11 =====
+Joel Jang, Zhenyu Jiang, Jan Kautz, Kaushil Kundalia,       2
+    Lawrence Lao, Zhiqi Li, Zongyu Lin, Kevin Lin, Guilin   [23] Philip J Ball, Laura Smith, Ilya Kostrikov, and Sergey
+     Liu, Edith Llontop, Loic Magne, Ajay Mandlekar, Avnish        Levine.   Efficient online reinforcement learning with
+     Narayan, Soroush Nasiriany, Scott Reed, You Liang Tan,         offline data.  In International Conference on Machine
+    Guanzhi Wang, Zu Wang, Jing Wang, Qi Wang, Jiannan        Learning, pages 1577–1594. PMLR, 2023. 2
+     Xiang, Yuqi Xie, Yinzhen Xu, Zhenjia Xu, Seonghyeon   [24] Henry Zhu, Justin Yu, Abhishek Gupta, Dhruv Shah,
+     Ye, Zhiding Yu, Ao Zhang, Hao Zhang, Yizhou Zhao,        Kristian Hartikainen, Avi Singh, Vikash Kumar, and
+     Ruijie Zheng, and Yuke Zhu.   Gr00t n1: An open       Sergey Levine. The ingredients of real-world robotic re-
+     foundation model for generalist humanoid robots, 2025.        inforcement learning. arXiv preprint arXiv:2004.12570,
+   URL https://arxiv.org/abs/2503.14734. 2                      2020. 2
+[12] Tony  Z.  Zhao,  Vikash Kumar,  Sergey  Levine, and   [25] Jianlan Luo, Zheyuan Hu, Charles Xu, You Liang Tan,
+     Chelsea Finn.  Learning fine-grained bimanual manip-       Jacob Berg, Archit Sharma, Stefan Schaal, Chelsea Finn,
+     ulation with low-cost hardware, 2023. URL https://arxiv.       Abhishek Gupta, and Sergey Levine.  Serl: A software
+     org/abs/2304.13705. 2                                              suite for sample-efficient robotic reinforcement learning.
+[13] Cheng Chi, Zhenjia Xu, Siyuan Feng, Eric Cousineau,        In 2024 IEEE International Conference on Robotics and
+     Yilun Du, Benjamin Burchfiel, Russ Tedrake, and Shuran       Automation (ICRA), pages 16961–16969. IEEE, 2024. 2,
+     Song. Diffusion policy: Visuomotor policy learning via       7
+     action diffusion. The International Journal of Robotics   [26] Allen Z. Ren, Justin Lidard, Lars Lien Ankile, Anthony
+     Research, page 02783649241273668, 2023. 2                Simeonov, Pulkit Agrawal, Anirudha Majumdar, Ben-
+[14] Karl  Pertsch, Kyle Stachowicz, Brian  Ichter, Danny       jamin Burchfiel, Hongkai Dai, and Max Simchowitz.
+     Driess, Suraj Nair, Quan Vuong, Oier Mees, Chelsea        Diffusion Policy Policy Optimization.  In Proceedings
+     Finn, and Sergey Levine. Fast: Efficient action tokeniza-         of the 2025 International Conference on Learning Rep-
+      tion for vision-language-action models.  arXiv preprint        resentations (ICLR), 2025. 2
+     arXiv:2501.09747, 2025. 2                               [27] Kang Chen, Zhihao Liu, Tonghe Zhang, Zhen Guo,
+[15] Suneel Belkhale and Dorsa Sadigh. Minivla: A better vla        Si  Xu,  Hao  Lin,  Hongzhi  Zang,  Quanlu  Zhang,
+     with a smaller footprint, 2024. URL https://github.com/        Zhaofei Yu, Guoliang Fan, Tiejun Huang, Yu Wang,
+     Stanford-ILIAD/openvla-mini. 2                           and Chao Yu.   πRL: Online  rl fine-tuning  for flow-
+[16] Physical  Intelligence.   π0.5: a vision-language-action       based vision-language-action models.  arXiv preprint,
+    model with open-world generalization.  In 9th Annual        arXiv:2510.25889, 2025. 2
+     Conference on Robot Learning, 2025. 2, 3                [28] Yuhui Chen, Shuai Tian, Shugao Liu, Yingting Zhou,
+[17] Tuomas Haarnoja, Aurick Zhou,  Pieter Abbeel, and       Haoran Li, and Dongbin Zhao.  Conrft: A reinforced
+     Sergey Levine.  Soft actor-critic: Off-policy maximum        fine-tuning method for vla models via consistency policy.
+     entropy deep reinforcement learning with a stochastic        arXiv preprint arXiv:2502.05450, 2025. 2, 3
+      actor. In International conference on machine learning,   [29] Xiu Yuan, Tongzhou Mu, Stone Tao, Yunhao Fang,
+     pages 1861–1870. Pmlr, 2018. 2, 3                      Mengke Zhang, and Hao Su. Policy decorator: Model-
+[18] Timothy P Lillicrap, Jonathan J Hunt, Alexander Pritzel,        agnostic online refinement for large policy model.  In
+     Nicolas Heess, Tom Erez, Yuval Tassa, David Silver, and       The Thirteenth International Conference on Learning
+    Daan Wierstra. Continuous control with deep reinforce-        Representations, 2025. 2
+    ment learning. arXiv preprint arXiv:1509.02971, 2015.    [30] Wenli Xiao, Haotian Lin, Andy Peng, Haoru Xue, Tairan
+[19] Scott Fujimoto, Herke van Hoof, and David Meger.       He, Yuqi Xie, Fengyuan Hu, Jimmy Wu, Zhengyi Luo,
+     Addressing function approximation error in actor-critic        Linxi ”Jim” Fan, Guanya Shi, and Yuke Zhu.   Self-
+     methods. arXiv preprint arXiv:1802.09477, 2018. 3, 4,       improving vision-language-action models with data gen-
+    12                                                                eration via residual rl, 2025. 2, 3, 7
+[20] Abbas Abdolmaleki, Jost Tobias Springenberg, Yuval   [31] Mitsuhiko Nakamoto, Simon Zhai, Anikait Singh, Max
+     Tassa, Remi Munos, Nicolas Heess, and Martin Ried-       Sobol Mark, Yi Ma, Chelsea Finn, Aviral Kumar, and
+      miller. Maximum a Posteriori Policy Optimisation.  In       Sergey Levine. Cal-ql: Calibrated offline rl pre-training
+     International Conference on Learning Representations         for  efficient online  fine-tuning.   Advances in Neural
+     (ICLR), 2018.  URL https://openreview.net/forum?id=        Information Processing Systems, 36:62244–62269, 2023.
+    S1ANxQW0b. 2, 4                                                 2, 12
+[21] Marcel Hussing, Claas Voelcker, Igor Gilitschenski, Amir   [32] Andrew Wagenmaker,  Mitsuhiko Nakamoto, Yunchu
+    massoud Farahmand, and Eric Eaton. Dissecting deep rl       Zhang, Seohong Park, Waleed Yagoub, Anusha Naga-
+     with high update ratios: Combatting value divergence,        bandi, Abhishek Gupta, and Sergey Levine. Steering your
+     2024. URL https://arxiv.org/abs/2403.05996. 2                  diffusion policy with latent space reinforcement learning.
+[22] Xinyue Chen, Che Wang, Zijian Zhou, and Keith Ross.        In Proceedings of the 9th Conference on Robot Learning
+    Randomized ensembled double q-learning: Learning fast       (CoRL), 2025. 2, 7
+     without a model. arXiv preprint arXiv:2101.05982, 2021.   [33] Physical Intelligence. π0.6 model card, 2025. URL https:
+
+===== Page 12 =====
+//website.pi-asset.com/pi06star/PI06 model card.pdf.  3,                     APPENDIX
+    7                                                             A. Contributions
+[34] Nicolas   Heess,   Gregory  Wayne,  David   Silver,
+                                                  CX, LK started the project. CX  built the infrastructure    Timothy   Lillicrap,  Tom  Erez,  and  Yuval  Tassa.
+                                                                    for online RL. JTS designed and trained the RL token. ME     Learning  continuous  control  policies  by  stochastic
+                                                                         built the intervention interface. AA and AE designed and     value  gradients.      In  C.  Cortes,  N.  Lawrence,
+                                                                         built the gripper and robot hardware. CX, LK designed the    D.  Lee,  M.  Sugiyama,  and  R.  Garnett,  editors,
+     Advances  in Neural Information Processing Systems,   system implementation, task suite and the experiments. SL,
+                                        LK provided advice throughout the project. LK, CX, JTS, SL,    volume  28.  Curran  Associates,  Inc.,  2015.   URL
+                                   ME worked on writing, illustrations and the video.     https://proceedings.neurips.cc/paper files/paper/2015/
+     file/148510031349642de5ca0c544f31b2ef-Paper.pdf. 3
+                                                             B. Additional experiment details
+[35] Ilya Sutskever, Oriol Vinyals, and Quoc V Le. Sequence
+      to sequence learning with neural networks. In Advances      First, we collect a demonstration dataset on the target task;
+      in neural information processing systems, pages 3104–  we then fine-tune the base VLA model and train the RL token
+     3112, 2014. 4                                               for 2000 to 10000 gradient steps on the single task data. The
+[36] Seohong Park, Qiyang Li, and Sergey Levine.  Flow  VLA is then frozen during online RL training.
+     q-learning.   In International Conference on Machine     During online RL, we initialize the RL actor and critic from
+     Learning (ICML), 2025. 4                                 scratch with a two-layer MLP (hidden dimension 256) for
+[37] Xue Bin Peng, Erwin Coumans, Tingnan Zhang, Tsang-   the zip  tie fastening, Ethernet, and charger insertion tasks.
+    Wei Lee, Jie Tan, and Sergey Levine.  Learning agile  We use a larger network consisting of a three-layer MLP
+     robotic locomotion  skills by imitating animals.  RSS,   with hidden dimension 512 for the more challenging screw
+     2020. 4                                                         installation task. Both networks receive the RL token produced
+[38] Jan Peters, Katharina M¨ulling, and Yasemin Alt¨un. Rel-  by the frozen base VLA model, proprioceptive position and
+      ative entropy policy  search.   In Proceedings  of  the   velocity as input. The critic is trained with an ensemble of
+     Twenty-Fourth AAAI Conference on  Artificial  Intelli-  two Q functions following Fujimoto et al. [19] and we use the
+     gence, AAAI’10, page 1607–1612. AAAI Press, 2010.   minimum of the two Q functions to calculate target values. The
+[39] Peter Dayan and Geoffrey E. Hinton. Using expectation-   actor additionally takes in the reference action chunk produced
+     maximization for reinforcement learning. Neural Com-  by the VLA model, which  is masked out  at 50% during
+     putation, 9(2):271–278, 1997. doi: 10.1162/neco.1997.9.   training and always provided during inference. The actor is
+     2.271.                                                  parameterized as a Gaussian policy with a small fixed standard
+[40] Sergey Levine.  Reinforcement learning and control as   deviation that outputs an action chunk at:t+C−1 ∈RC×d
+      probabilistic inference: Tutorial and review, 2018. URL   with C=10 from the current observation. To increase sample
+     https://arxiv.org/abs/1805.00909. 4                           efficiency, we subsample action chunks 2 control steps apart
+[41] Michael  Kelly,  Chelsea  Sidrane,  Katherine  Driggs-   during training, so each second of data produces roughly 25
+     Campbell, and Mykel J. Kochenderfer.  Hg-dagger: In-   samples for the RL network. A sparse +1 reward is provided
+      teractive imitation learning with human experts, 2019.  by the operator during training when the RL task has been
+   URL https://arxiv.org/abs/1810.02890. 6, 7               completed.
+[42] Stephane Ross, Geoffrey Gordon, and Drew Bagnell. A     For the screw installation and zip tie fastening tasks, we
+     reduction of imitation learning and structured prediction    first start the RL training in the critical-phase setting only. We
+      to no-regret online learning. In Geoffrey Gordon, David   then advance to a full task phase, first running the base model
+     Dunson, and Miroslav Dud´ık, editors, Proceedings of   to complete the non-critical phase of the task, and switching
+     the Fourteenth  International Conference on  Artificial   to the RL policy when the critical phase  is reached. This
+      Intelligence and  Statistics, volume 15 of Proceedings   two-phase training strategy improves training efficiency while
+      of Machine Learning Research, pages 627–635, Fort   ensuring the RL policy is robust to the initial distributions
+     Lauderdale, FL, USA, 11–13 Apr 2011. PMLR. URL   induced by the base policy on the earlier part of the task. We
+     https://proceedings.mlr.press/v15/ross11a.html. 7           report the policy performance after gathering about 5 hours of
+                                                                     data.
+
+                                                          C. Additional experimental details for the baselines
+
+                                                            For all baseline methods, we use the same environment and
+                                                                 action space setup as for our method – policies execute in
+                                                                    delta action space at 50 Hz.
+                                                PLD: Following the original paper, we first pre-train the
+                                                                             critic network on 50 base policy rollouts with Cal-QL [31]
+                                                                    for better sample efficiency. We then proceed to the online
+                                         RL stage.
+
+===== Page 13 =====
+DSRL: Following the original implementation, our imple-
+mentation predicts a (1, 32) dimensional latent action, which
+is repeated 50 times in the first dimension to match the noise
+input space of our action-chunk VLA.
+  HIL-SERL: Following the  original implementation, we
+initialize RLPD training with 20 episodes of demonstrations
+and provide interventions throughout training. However, it was
+not able to succeed in our setting because of the higher control
+frequency (50 Hz) compared to the original system (10 Hz)
+and the absence of an action-space bounding box to reduce
+exploration space.
+  DAgger: We fine-tune our VLA with a mixture of demon-
+stration data and the same set of intervention data collected
+during the online RL training.
