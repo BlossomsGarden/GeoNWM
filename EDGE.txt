@@ -1,0 +1,1823 @@
+﻿EDGE: Experience-Distillation for Guided Exploration in Agentic
+Reinforcement Learning
+
+Can Xie1,2, Yuyi Zhou2,3, Wen Yang1,2, Ziyi Zhang2,3,
+Siyao Song1,2, Yingzhuo Deng1,2, Shuo Ren2*, Jiajun Zhang1,2,4* ,
+
+1 School of Artificial Intelligence, University of Chinese Academy of Sciences
+2 Institute of Automation, Chinese Academy of Sciences
+
+3 School of Advanced Interdisciplinary Sciences, University of Chinese Academy of Sciences
+4 Wuhan AI Research
+
+{xiecan2024,shuo.ren}@ia.ac.cn, jjzhang@nlpr.ia.ac.cn
+Abstract
+Reinforcement learning with outcome-based
+objectives such as GRPO enables LLM-based
+agents to solve complex, long-horizon tasks,
+yet the reusable exploration patterns embed-
+ded in interaction trajectories are largely dis-
+carded after a single policy update. Existing
+experience-augmented approaches retrieve his-
+torical guidance at inference time, but they
+apply experiences without accounting for the
+policy’s evolving capability and create persis-
+tent dependencies on external retrieval. We
+propose EDGE (Experience-Distillation for
+Guided Exploration), a framework that treats
+retrieved experiences as temporary training-
+time scaffolds and progressively internalizes
+their benefits into the parametric policy. Con-
+cretely, EDGE partitions each rollout group
+into experience-conditioned and experience-
+free trajectories to estimate and admit only
+positive marginal gains without extra sam-
+pling, then distills the induced behavior into
+the base policy via a reverse-KL objective on
+its own empirical support. A co-evolutionary
+experience bank further synthesizes guidance
+from emerging failure modes and prunes ob-
+solete entries as the policy evolves. Across
+embodied, web, and search-based QA tasks,
+EDGE improves over strong RL baselines by
+up to 12.5 points and remains effective without
+inference-time scaffolds or a proprietary reflec-
+tor. The code is available at https://github.
+com/xvolcano02/EDGE.
+
+1 Introduction
+Reinforcement learning (RL) with outcome-based
+objectives such as GRPO (Shao et al., 2024) has be-
+come a standard post-training paradigm for LLM-
+based agents that reason, plan, and act through
+multi-turn interactions (Yao et al., 2023; Shinn
+et al., 2023; Yao et al., 2022; Shridhar et al., 2021;
+Feng et al., 2025; Wang et al., 2025b; Jin et al.,
+
+*Corresponding authors
+
+1
+
+2025). Yet current agentic RL uses its own experi-
+ence poorly. A single rollout may contain reusable
+patterns—effective task decompositions, recovery
+strategies, dead-end avoidance, but once a trajec-
+tory contributes a scalar advantage to one policy
+update, these patterns are largely discarded. The
+agent must therefore rediscover them from scratch,
+a particularly costly failure mode in sparse-reward,
+long-horizon environments where agentic RL is
+most needed.
+
+A growing body of work addresses this ineffi-
+ciency by augmenting agents with external expe-
+rience at inference time, through episodic reflec-
+tions (Shinn et al., 2023; Zhao et al., 2024), per-
+sistent memory (Chhikara et al., 2025; Fang et al.,
+2026), or skill libraries (Xia et al., 2026; Liu et al.,
+2026). While effective, these approaches share
+two structural limitations that become apparent as
+training progresses. Experience utility is inher-
+ently policy-dependent: guidance that accelerates
+an undertrained policy can become redundant—or
+actively harmful—once the corresponding behavior
+has been internalized, yet most methods apply ex-
+perience unconditionally or filter it by static heuris-
+tics. Moreover, if the agent must retrieve experi-
+ence at deployment, part of its competence resides
+in the context window rather than in the model pa-
+rameters, incurring persistent token overhead and
+sensitivity to retrieval noise. 1 These observations
+suggest that experience reuse in agentic RL should
+be treated as a dynamic lifecycle rather than a static
+retrieval mechanism. External experience could
+first guide exploration, as a temporary training-
+time scaffold, then be exploited by consolidating
+its useful behavioral effect into the experience-free
+policy, and finally be retired once its utility van-
+ishes. Under this view, experience reuse becomes a
+
+1These are not hypothetical concerns: in our experiments,
+naive memory augmentation (e.g., EvolveR, GRPO+Mem0)
+degrades performance well below vanilla GRPO, confirming
+that unfiltered experience injection is unreliable.
+arXiv:2608.21946v2  [cs.CL]  26 Aug 2026
+
+
+
+Reflector
+Update Co-Evolution
+
+Experience-Guided Exploration
+Experience Scaffolding Marginal Gain 
+
+Bank Estimation
+experience Privileged Teacher Context
+
+∆𝑒= avg 𝑅𝑇 − avg(𝑅𝑆)
+
+Agent Loop 𝑜0 𝑒0 𝑎0 𝑜1 𝑒1 𝑎1 … 𝑟𝑇
+(Δ𝑒> 0)
+
+Environment 𝑜0 𝑒0 𝑎0 𝑜1 𝑒1 𝑎1 … 𝑟 𝑒
+𝑇
+
+Gain-Gated Distillation
+
+task Student Context
+/obs 𝑸
+
+action 𝑷
+𝑜0 𝑎0 𝑜1 𝑎1 𝑜2 𝑎2 … 𝑟S 𝜏𝑆 𝝅
+
+Policy 𝑻 ∙ 𝒕, 𝒆, 𝝉𝑺<𝒏
+
+𝑜0 𝑎0 𝑜1 𝑎1 𝑜2 𝑎2 … 𝑟S 𝜋𝜃 𝐷𝐾𝐿(𝑄 ∥ 𝑃)
+
+LLM Agent
+𝝅𝑺(∙ |𝒕)
+
+GRPO Loss Distillation Loss
+
+Update Policy
+
+Figure 1: Overview of the EDGE framework. (a) Experience-guided exploration scaffolding uses contrastive
+rollouts to estimate the marginal gain ∆e of a retrieved experience. (b) Gain-gated distillation internalizes beneficial
+scaffold behavior into the base policy only when ∆e > 0. (c) The experience bank co-evolves with the policy via
+failure-driven expansion and utility-based pruning, yielding a retrieval-free policy at deployment.
+
+scaffold-to-parameter learning problem rather than the scaffold aligned with the agent’s evolving capa-
+a retrieve-and-prompt augmentation problem. bility.
+
+On ALFWorld (Shridhar et al., 2021) and Web-
+In this paper, we instantiate this idea in EDGE Shop (Yao et al., 2022), EDGE consistently
+
+(Experience-Distillation for Guided Exploration), outperforms skill-free RL and prior experience-
+a framework that turns retrieved experience from augmented methods, with the largest gains on
+persistent inference-time memory into dynamically exploration-intensive subtasks (e.g., Heat, Cool,
+validated training-time scaffolding. EDGE uses Pick2). When external experiences are withheld
+online marginal-gain estimation to decide when an at inference time, EDGE retains 96.0% of its scaf-
+experience should guide exploration, be distilled folded performance—compared with 82.9% for
+into the policy, or be retired as the policy evolves, SkillRL and 92.3% for EMPO2—confirming that
+via three core mechanisms. First, experience- useful exploration priors have been absorbed into
+guided exploration scaffolding partitions each the parametric policy. On seven search-based QA
+GRPO rollout group into experience-conditioned benchmarks with Qwen3-4B, EDGE further im-
+and experience-free trajectories, estimating the proves over Search-R1 by 5.9 points on average;
+marginal gain of a retrieved experience without ad- using the policy itself as the reflector preserves
+ditional environment sampling and retaining only 97.3% of the performance obtained with GPT-4o.
+positive-gain instances. Then, gain-gated privi-
+leged distillation Our contributions are as follows:
+
+serves as the exploitation step,
+transferring the behavior induced by the privileged • We identify two failure modes of experience-
+context into the standard policy via reverse-KL di- augmented agentic RL—policy-dependent ex-
+vergence computed on the student’s own empirical perience utility and persistent inference-time
+support, activating only when the estimated gain is retrieval dependence—and reframe experience
+positive to avoid negative transfer. Finally, expe- reuse as a dynamic scaffold-to-parameter transi-
+rience bank evolution and management enables tion.
+the experience bank to co-evolve with the policy
+throughout training: new experiences are synthe- • We introduce experience-guided exploration
+sized from failure-mode analysis, while obsolete scaffolding, which partitions rollout groups to
+ones are pruned based on tracked utility, keeping estimate the marginal value of each retrieved
+
+2
+
+… …
+
+
+
+experience under the current policy without re- surrogate objectiv[e with KL regularization:
+quiring additional environment sampling.
+
+G
+1 ∑ |τi|
+
+1 ∑( (
+• We propose gain-gated privileged distillation, LRL(θ) = −E min ρi,t Âi,
+
+G |τ |
+which internalizes scaffold-induced behavior i=1) i t=1 ( ))]via reverse-KL on the student’s own empiri-
+cal support, gated by the estimated marginal clip(ρi,t, 1−ϵ, 1+ϵ) Âi − β DKL πθ∥πref ,
+
+gain to prevent negative transfer, together with (4)
+a co-evolutionary experience bank that expands
+and prunes in response to the policy’s evolving where ρi,t = πθ(at | x, ht, ot) / πθold(at | x, ht, ot)
+needs. is the importance sampling ratio, πref is the ref-
+
+erence policy, and β controls KL penalty strength.
+• Experiments across embodied, web, and search- By contrasting outcomes within each group, GRPO
+
+based QA tasks show that EDGE improves task steers θ toward successful action sequences with-
+performance and training efficiency, transfers to out a learned value function. However, in sparse-
+a newer Qwen3 backbone, and remains effec- reward, partially observable environments, un-
+tive with a self-reflector and without experience guided exploration often yields groups in which
+retrieval at deployment. few or no trajectories succeed, rendering the ad-
+
+vantage estimate uninformative—a limitation we
+2 Preliminaries address in the following section.
+We formalize the multi-turn decision-making pro- 3 Method: EDGE
+cess of an LLM-based agent as a Partially Observ-
+able Markov Decision Process (POMDP) (Kael- We present EDGE (Experience-Distillation for
+bling et al., 1998) ⟨S,A,O, T ,R⟩. The observa- Guided Exploration), a framework that iteratively
+tion space O consists of natural-language strings strengthens the multi-turn reasoning capability of
+emitted by the environment, and the action spaceA LLM-based agents (Figure 1). Central to our ap-
+comprises token sequences generated autoregres- proach is treating retrieved external experience
+sively by the policy πθ. Given a task instruction not as a static inference-time prompt—which in-
+x, the agent interacts with the environment over a flates the context window and creates persistent
+sequence of turns: at step t it receives observation retrieval dependence—but as a training-time scaf-
+ot ∈ O and produces action at ∈ A according to fold that guides exploration and is discarded at
+
+deployment. The agent first explores with privi-
+a leged access to experience, then distills only the
+t ∼ πθ(· | x, ht, ot), (1)
+
+empirically beneficial behavior into its own param-
+where ht = (o1, a1, . . . , ot−1, at−1) is the inter- eters, so the deployed policy requires no external
+action history. An episode terminates upon task scaffold. Section 3.1 introduces the experience-
+completion or at a maximum step limit, yielding guided exploration scaffolding, Section 3.2 details
+a sparse binary reward R(τ) ∈ {0, 1} and a full the gain-gated privileged distillation mechanism,
+trajectory and Section 3.3 describes the experience bank evo-
+
+lution and management strategy.
+τ = (x, o1, a1, . . . , oT , aT , R(τ)). (2) 3.1 Experience-Guided Exploration
+
+Scaffolding
+We build on Group Relative Policy Optimiza- To provide exploratory guidance in the sparse-
+
+tion (GRPO) (Shao et al., 2024), which samples reward, partially observable environments typical
+a group of G parallel trajectories {τi}Gi=1 per task of agentic tasks, EDGE introduces a controlled in-
+and computes group-normalized advantages: formation asymmetry within the standard GRPO
+
+rollout group. Given a task instruction x and an
+R(τi)−mean({R(τj)}Gj=1)
+
+Â experience bank E , we retrieve the top-m most rel-
+i = . (3)
+
+std({R(τj)}Gj=1) evant experiences by embedding similarity, using
+the task instruction and initial environmental obser-
+
+The policy is updated by maximizing a clipped vations as the query, and select the highest-scoring
+
+3
+
+
+
+entry e ∈ E . Recall that GRPO samples a group of the base policy parameters so that the agent can
+G parallel trajectories per task to estimate relative reproduce them from the standard context alone.
+advantages (Eq. (3)). We partition this group into Our approach realizes this through asymmetric
+two equal subsets without adding extra rollouts: self-distillation. Rather than relying on a separate,
+
+unconditionally superior teacher, we use the same
+• Teacher rollouts (T T, G/2 trajectories): con- policy πθ under two informational conditions: the
+
+ditioned on the privileged context cT = x ⊕ e, teacher is πθ evaluated with the privileged context
+where ⊕ denotes concatenation under a unified
+
+cT (gradients stopped), while the student operates
+chat template. under cS. The asymmetry therefore lies in the infor-
+
+• Student rollouts (T S, G/2 trajectories): condi- mation available to each role, not in model capacity.
+tioned on the standard context cS = x alone. The gain gate I(∆e > 0) further ensures that distil-
+
+lation is triggered only when the scaffold yields a
+Because both subsets share the same policy πθ and verified performance advantage, allowing the pol-
+differ only in whether the retrieved experience is icy to selectively internalize reusable reasoning
+visible, any performance gap can be attributed to patterns while avoiding negative transfer.
+the informational advantage provided by e. We To guard against covariate shift, we construct the
+quantify this gap via the instantaneous marginal distillation target on the student’s own empirical
+gain:
+
+1 ∑ 1 ∑ support. For a gain-gated task instance (∆e > 0)
+and a student trajectory τ ∈ T S with token se-
+
+∆e = R(τ) − R(τ), (5)
+|T T| |T S| quence (y1, . . . , ym) generated under cS, we per-
+
+τ∈T T τ∈T S
+form a no-gradient forward pass of πθ over the
+
+where R(τ) is the binary outcome reward defined same tokens conditioned on cT. Because both
+in §2. A positive ∆e signals that the experience passes share identical actions, the comparison iso-
+provides useful guidance beyond the agent’s cur- lates the informational advantage of e without in-
+rent capability; a non-positive value indicates it troducing out-of-distribution transitions.
+is redundant or harmful. This estimate gates the We adopt the reverse KL divergence
+distillation objective (§3.2) and drives experience DKL(πstudent∥πteacher) as the distillation ob-
+bank updates (§3.3). jective. Unlike the forward KL, which compels
+
+Beyond gating distillation, ∆e controls which the student to cover the full teacher support and
+rollouts enter the RL loss itself. When ∆e > 0, can induce mode-covering artifacts, the reverse
+advantages (Eq. (3)) are computed over all G tra- KL is mode-seeking: it encourages the policy
+jectories. The pooled baseline therefore reflects to concentrate on the most effective reasoning
+the performance level achievable under the scaf- mode under the scaffold. T[he token-level scaffold
+fold, giving student rollouts a stronger calibrated internalization loss is:
+reference than a within-subset baseline would pro-
+vide. When ∆e ≤ 0, teacher-conditioned trajec- Ldistill(θ) = Eτ∼T S I(∆e>0)
+
+tories are excluded from the RL loss entirely: ad- ∑ ]
+m ∑
+
+vantages are computed over T S alone, reducing the πS
+θ (y) δt(y) ,
+
+update to a standard GRPO step. Without this mask- t=1 y∈V
+ing, non-beneficial teacher rollouts would still shift
+
+πθ(y | cSthe group baseline and distort student advantages— δ t)
+t(y) = log < , (6)
+
+contaminating the policy gradient even though dis- πsg(θ)(y | cT<t)
+tillation is gated off.
+
+where πS
+θ (y) ≜ πθ(y | cS<t) for brevity, δt(y) is
+
+3.2 Gain-Gated Privileged Distillation the per-token log-ratio between the student and the
+The scaffolding in §3.1 exposes the agent to suc- privileged teacher, and sg(·) denotes stop-gradient.
+cessful reasoning patterns it may not discover on This loss is combined with the GRPO objective
+its own, but because the retrieved experience is (Eq. (4)) to form the joint actor loss:
+unavailable at deployment, these gains remain Lactor(θ) = LRL(θ) + λLdistill(θ), (7)
+ephemeral unless consolidated into the policy it-
+self. This motivates a complementary mechanism: where λ controls the relative weight of scaffold
+distilling the scaffold-induced improvements into internalization versus the RL signal. Through this
+
+4
+
+
+
+joint optimization, the deployed agent reproduces 4 Experiments
+privileged reasoning without any external scaffold
+at test time. We evaluate EDGE to examine whether experience
+
+scaffolding can improve agentic RL while being
+3.3 Experience Bank Evolution and progressively internalized by the policy. Our exper-
+
+Management iments address five questions: (1) Does EDGE
+improve over prompting, vanilla RL, and prior
+
+A static experience library cannot adequately sup- experience-augmented methods, particularly on
+port the agent throughout training: as πθ improves, exploration-intensive tasks? (2) Does the trained
+it encounters situations where existing experiences policy retain its performance when external expe-
+provide insufficient guidance; conversely, previ- riences are removed at inference time? (3) How
+ously beneficial experiences may become redun- much does each component—gain gating, distilla-
+dant once the policy has internalized the corre- tion, and pruning—contribute, and how do they in-
+sponding behavior, or harmful if they conflict with teract? (4) Is experience utility truly non-stationary,
+newly discovered strategies. EDGE therefore treats and does the co-evolutionary bank adapt accord-
+E as a living repository that co-evolves with the ingly during training? (5) Does EDGE generalize
+policy through both expansion and pruning. to a newer backbone and search-based QA, and
+
+Following Xia et al. (2026), we generate new ex- remain effective without a stronger proprietary re-
+periences from the agent’s own rollout trajectories. flector?
+After each training step, we identify task categories
+whose success rate falls below a threshold ξ and 4.1 Experiment Setup
+collect representative failed and successful trajec- Environments. We evaluate EDGE across two
+tories from these categories. A reflector LLM then complementary agentic settings: interactive deci-
+analyzes the contrast between them to synthesize sion making and search-based QA. For the former,
+new experiential guidance:( we use two environments with sparse outcome-
+
+level feedback. ALFWorld (Shridhar et al., 2021)
+τ+, τ−
+
+)
+enew = freflect , (8) comprises 3,827 text-based household tasks across
+
+six types (Pick, Look, Clean, Heat, Cool, and
+where τ+ and τ− denote a successful and a failed Pick2), while WebShop (Yao et al., 2022) requires
+trajectory from the same task category, respectively. agents to search and purchase products matching
+The generated experiences are deduplicated against user instructions from a catalog of over 1.1M items.
+existing entries and inserted into E for retrieval in To test generalization beyond interactive environ-
+subsequent training iterations. ments, we further evaluate search-based QA on NQ,
+
+Meanwhile, the utility of existing experiences is TriviaQA, PopQA, HotpotQA, 2WikiMultiHopQA,
+continuously tracked via an Exponential Moving MuSiQue, and Bamboogle, covering single- and
+Average (EMA) score for each experience e: multi-hop evidence retrieval and reasoning.
+
+Baselines. We compare against three fami-
+U (t)
+e = (1− µ)U (t−1)
+
+e + µ∆e, (9)
+lies of methods: closed-source LLM agents
+(GPT-4o (OpenAI et al., 2024) and Gemini-
+
+where µ ∈ (0, 1) is the momentum coefficient 2.5-Pro (Comanici et al., 2025)), prompting
+and ∆e is the instantaneous marginal gain from agents (ReAct (Yao et al., 2023) and Reflex-
+Eq. (5). The EMA smooths over stochastic fluctua- ion (Shinn et al., 2023)), and training-based
+tions while remaining responsive to genuine shifts agents. The post-training baselines include
+in experience utility. Experiences whose tracked GRPO (Shao et al., 2024), OPSD (Zhao et al.,
+utility (t)
+
+Ue falls below a threshold η are removed 2026), EvolveR (Wu et al., 2026), GRPO aug-
+from E , retiring scaffolds that have been absorbed mented with Mem0 (Chhikara et al., 2025),
+into the policy and reducing overhead during re- SkillRL (Xia et al., 2026), and EMPO2 (Liu et al.,
+trieval and rollout. This yields a co-evolutionary 2026). Detailed descriptions are provided in Ap-
+dynamic: the policy improves by internalizing use- pendix B.1.
+ful experiences, exposing new failure modes that
+drive bank expansion, while obsolete experiences Training details. We use Qwen2.5-1.5B/7B-
+are simultaneously pruned away. Instruct (Qwen et al., 2025) as the base models for
+
+5
+
+
+
+ALFWorld WebShop
+Type Method
+
+Pick Look Clean Heat Cool Pick2 All Score Succ.
+Closed-Source Model
+Prompting GPT-4o 75.3 60.8 31.2 56.7 21.6 49.8 48.0 31.8 23.7
+Prompting Gemini-2.5-Pro 92.8 63.3 62.1 69.0 26.6 58.7 60.3 42.5 35.9
+Qwen2.5-1.5B-Instruct
+Prompting Base Model 5.9 5.5 3.3 9.7 4.2 0.0 4.1 23.1 5.2
+Prompting ReAct 17.4 20.5 15.7 6.2 7.7 2.0 12.8 40.1 11.3
+Prompting Reflexion 35.3 22.2 21.7 13.6 19.4 3.7 21.8 55.8 21.9
+Post-Training GRPO 85.3 53.7 84.5 78.2 59.7 53.5 72.8 75.8 56.8
+Post-Training SkillRL 91.2±4.3 64.3±4.6 78.1±5.4 76.9±6.3 70.8±6.5 54.6±6.1 74.2±4.7 77.3±3.5 60.9±3.7
+Post-Training EMPO2 86.9±3.3 66.2±5.2 79.3±4.9 79.1±4.5 75.3±5.7 64.8±6.6 76.8±3.7 78.2±3.7 63.2±3.3
+Post-Training EDGE 80.6±2.2 73.7±5.5 76.0±4.3 87.3±4.0 85.6±6.1 68.4±5.6 79.7±2.3 78.8±2.1 65.6±3.2
+
+Qwen2.5-7B-Instruct
+Prompting Base Model 33.4 21.6 19.3 6.9 2.8 3.2 14.8 26.4 7.8
+Prompting ReAct 48.5 35.4 34.3 13.2 18.2 17.6 31.2 46.2 19.5
+Prompting Reflexion 62.0 41.6 44.9 30.9 36.3 23.8 42.7 58.1 28.8
+Post-Training EvolveR† 64.9 33.3 46.4 13.3 33.3 33.3 43.8 42.5 17.6
+Post-Training GRPO+Mem0† 78.1 54.8 56.1 31.0 65.0 26.9 54.7 58.1 37.5
+Post-Training OPSD† 50.0 60.0 22.7 21.4 17.6 9.5 32.8 4.5 2.3
+Post-Training GRPO 92.8 85.7 89.3 75.7 74.5 67.7 82.1 80.3 70.1
+Post-Training GRPO+OPSD† 91.4 61.5 100 87.5 76.5 52.2 80.4 86.8 76.5
+Post-Training SkillRL 94.1±2.4 83.3±4.3 88.4±3.6 85.6±5.1 90.2±5.6 78.6±4.9 88.2±3.7 86.2±3.1 76.7±3.3
+Post-Training EMPO2 93.3±3.7 88.9±3.9 91.2±4.4 88.5±5.3 89.4±4.6 79.8±5.1 89.1±2.8 88.3±2.6 77.1±4.0
+Post-Training EDGE 96.0±1.9 85.1±4.8 93.4±3.2 90.0±2.6 92.9±4.5 81.6±6.0 90.4±2.2 89.6±2.8 82.6±3.8
+
+Table 1: Performance on ALFWorld and WebShop. We report the average success rate (%) per subtask and
+overall for ALFWorld, and both the average score and success rate (%) for WebShop. Results of EDGE and other
+experience-augmented training methods are averaged over 3 random seeds (mean±std). † denotes results replicated
+from (Xia et al., 2026) and (Lu et al., 2026a).
+
+ALFWorld and WebShop, and Qwen3-4B-Instruct- augmented baseline EMPO2 by 1.3 and 5.5 points,
+2507 (Yang et al., 2025) for search-based QA. For with consistent gains at 1.5B.
+ALFWorld and WebShop, all post-training meth-
+ods use exactly the same hyperparameter configu- The subtask breakdown reveals that EDGE’s ad-
+rations. The rollout group size G for group-based vantage concentrates on exploration-heavy tasks—
+RL methods is set to 8. For experience retrieval, Heat, Cool, and Pick2—which demand longer ac-
+we encode experiences with Qwen3-Embedding- tion sequences with fewer intermediate rewards.
+0.6B (Zhang et al., 2025b) and rank candidates On WebShop, the success-rate improvement over
+by cosine similarity against the task instruction GRPO (+12.5) exceeds the score improvement
+and initial observations. We use GPT-4o (Ope- (+9.3), indicating that EDGE helps agents com-
+nAI et al., 2024) as the default reflector. To test plete full decision chains rather than merely accu-
+whether EDGE depends on a stronger proprietary mulate partial credit.
+model, the QA experiments also replace GPT-4o These results highlight that experience is most
+with the Qwen3 policy itself while leaving the re- effective as selective exploration guidance rather
+maining framework unchanged. Full training set- than unconditional augmentation. Naive mem-
+tings and hyperparameter details are provided in ory approaches (EvolveR, GRPO+Mem0) degrade
+Appendix B.2, with a wall-clock breakdown in Ap- well below vanilla GRPO, and standalone self-
+pendix B.3. distillation (OPSD) provides insufficient signal
+
+without effective exploration. Combining the two
+4.2 Main Results (GRPO+OPSD) recovers competitive aggregate
+Table 1 presents results on ALFWorld and Web- performance but remains brittle across subtasks,
+Shop across two model scales. At 7B, EDGE whereas EDGE’s marginal-gain gating ensures
+achieves 90.4% success rate on ALFWorld and only beneficial experiences contribute, yielding
+82.6% on WebShop, improving over GRPO by 8.3 both higher overall success and more uniform sub-
+and 12.5 points and over the strongest experience- task coverage.
+
+6
+
+
+
+Method NQ TriviaQA PopQA HotpotQA 2Wiki MuSiQue Bamboogle Avg.
+
+Qwen3-4B-Instruct-2507 17.8 42.3 27.2 23.6 21.5 5.6 7.4 20.8
+Search-R1 40.6 61.2 43.7 35.2 36.3 12.4 41.6 38.7
+SkillRL (GPT-4o) 42.4 59.6 44.3 42.1 43.4 15.9 43.2 41.5
+EDGE (GPT-4o) 48.0 63.4 46.9 42.4 48.1 17.8 45.6 44.6
+EDGE (self) 44.8 64.3 45.4 43.6 45.5 16.2 44.2 43.4
+
+Table 2: Performance (%) on seven search-based QA benchmarks with Qwen3-4B-Instruct-2507. “GPT-4o” and
+“self” denote the reflector used to synthesize experiences. Best results are bolded.
+
+With experience Without experience Method Pick Look Clean Heat Cool Pick2 All
+(a) (b)
+
+100 GRPO 92.8 85.7 89.3 75.7 74.5 67.7 82.1
+100 −15.1 −6.9 −3.6 96.0%
+
+88.2 89.1 90.4
+82.2 86.8 95 EDGE 96.0 85.1 93.4 90.0 92.9 81.6 90.4
+
+80 73.1 92.3%
+w/o ExpPruning 90.5 82.2 90.1 84.3 87.6 76.8 86.7
+
+60 90 w/o Distillation 91.2 81.5 91.8 78.7 77.2 71.1 83.6
+40
+
+85 w/o Gain-Gating 83.1 72.5 79.7 65.3 61.8 61.2 72.3
+82.9%
+
+20
+
+0 80
+SkillRL EMPO2 EDGE SkillRL EMPO2 EDGE Table 3: Ablation results on ALFWorld with Qwen2.5-
+
+7B-Instruct. We report success rate (%) per subtask and
+Figure 2: Performance retention after scaffold re- overall.
+moval at inference time. EDGE preserves 96.0%
+of its scaffolded performance without external expe-
+riences, compared with 82.9% for SkillRL and 92.3% experience-guided behaviors are largely internal-
+for EMPO2, indicating more effective internalization ized by the policy and remain available without
+into the parametric policy at the 7B scale. inference-time retrieval.
+
+Generalization to Search-Based QA and Self- 4.3 Analysis
+Reflection. Table 2 tests whether EDGE trans- Ablation Studies. Table 3 isolates each compo-
+fers to a newer backbone and search-based QA nent on ALFWorld with Qwen2.5-7B-Instruct. The
+without relying on external reflection. With GPT- most striking finding is that removing the gain gate
+4o, EDGE leads on five of seven benchmarks. drops overall success to 72.3%—9.8 points below
+More importantly, self-reflection retains 97.3% vanilla GRPO—revealing that unfiltered experi-
+of this performance while surpassing both base- ence injection does not merely fail to help but ac-
+lines on every benchmark. Its particularly strong tively harms the policy, particularly on exploration-
+results on TriviaQA and HotpotQA further sug- heavy subtasks where misleading guidance com-
+gest that self-generated experience remains effec- pounds over long horizons. This result also ad-
+tive across both fact-oriented and multi-hop search dresses a natural concern about the G/2+G/2 roll-
+settings. Together, these findings indicate that out partition: since all other ablated variants retain
+EDGE’s gains arise primarily from its experience the same split yet outperform GRPO, the partition
+construction mechanism rather than privileged ac- itself does not dilute the RL signal; the degrada-
+cess to a stronger reflector; GPT-4o improves the tion is attributable entirely to distilling low-quality
+quality of the resulting experience, but is not essen- experiences.
+tial for successful transfer. The remaining two components contribute com-
+
+plementary benefits. Without distillation, perfor-
+Inference without External Scaffolds. Figure 2 mance falls to 83.6%, only 1.5 points above GRPO,
+poses a stricter test: how much performance sur- with losses concentrated on the same exploration-
+vives when all external experiences are withheld heavy subtasks—confirming that scaffolded explo-
+at inference time? EDGE preserves 96.0% of ration provides transient guidance but does not
+its scaffolded performance, compared with 92.3% durably reshape the policy without explicit behav-
+for EMPO2 and 82.9% for SkillRL, confirming ioral transfer. Without experience pruning, per-
+that the reverse-KL distillation stage successfully formance declines more modestly to 86.7% with
+transfers scaffold-induced behavior into the para- losses spread evenly across subtasks, indicating
+metric policy. This near-complete retention sup- that pruning acts as a maintenance mechanism that
+ports the intended scaffold-to-parameter transition: keeps the experience bank aligned with the pol-
+
+7
+
+Success rate (%)
+
+Retention (%)
+
+
+
+90 EDGE 5600 EDGE
+48 GRPO GRPO
+
+75
+4800
+
+42
+
+60
+36 4000
+
+45
+30
+
+3200
+30
+
+EDGE 24
+
+15 GRPO 2400
+
+0 20 40 60 80 100 120 140 160 180 200 0 20 40 60 80 100 120 140 160 180 0 20 40 60 80 100 120 140 160 180
+Training Step% Training Steps Training Step 
+
+Figure 3: Training dynamics of EDGE vs. GRPO on ALFWorld with Qwen2.5-7B-Instruct. EDGE achieves
+higher validation success while reducing both environment steps and trajectory length more rapidly, indicating that
+scaffolded exploration is progressively internalized into more efficient experience-free behavior.
+
+icy’s evolving capability rather than targeting any 0.3
+Static E perience
+
+specific failure mode. E perience Evolution
+0.2 Evolution + Pruning
+
+0.1
+Training Dynamics. Figure 3 reveals a clear
+
+0.0
+divergence between EDGE and GRPO after ap-
+proximately step 100: GRPO plateaus and be- −0.1
+
+gins to regress, whereas EDGE continues to im- −0.2
+
+prove steadily toward 90% validation success. −0.3
+700 0 25 50 75 100 125 150 175 200
+
+We attribute GRPO’s decline to an exploration– Static Experience Training Steps
+exploitation collapse: once the policy commits to 600 Experience E olution
+
+E olution + Pruning
+
+locally successful strategies, it loses the diversity 500
+
+needed to solve the remaining hard tasks, and fur- 400
+
+ther optimization erodes earlier gains. EDGE’s 300
+
+experience scaffolds counteract this by continually 200
+
+injecting structured exploration guidance, while 100
+
+gain gating ensures that this guidance remains ben- 0
+eficial as the policy strengthens. The efficiency pan- 0 25 50 75 100 125 150 175 200
+
+Training Steps
+els corroborate this interpretation—EDGE reduces
+both environment steps and trajectory length more Figure 4: Experience gain dynamics during training.
+rapidly than GRPO, indicating that the policy inter-
+nalizes increasingly direct action sequences rather only curbs bank growth but causes the bank to
+than relying on extended trial-and-error, consistent shrink after step 100, indicating that the policy ab-
+with the scaffold-removal results in Figure 2. sorbs existing experiences faster than new failure
+
+modes generate replacements—a direct signature
+Experience Gain Tracking. Figure 4 tracks the of successful internalization. Further details on
+mean marginal gain ∆e (Eq. (5)) across training to bank evolution dynamics appear in Appendix C.2.
+test a key premise of §3.3: that experience utility is
+non-stationary. With a static bank, the initially pos- 5 Related Work
+itive gain decays and turns negative after roughly
+step 100—confirming that once-useful experiences Reinforcement Learning for LLM Agents. RL
+become actively harmful as the policy outgrows has become a standard post-training paradigm
+them, and explaining why removing gain gating for LLM agents in multi-turn environments (Yao
+in Table 3 degrades performance below vanilla et al., 2022; Shridhar et al., 2021; Feng et al.,
+GRPO. Experience evolution delays this decay, but 2025; Wang et al., 2025b; Jin et al., 2025; Li
+unchecked bank growth (reaching over 650 entries) et al., 2026), progressing from PPO-based meth-
+introduces retrieval noise that keeps the gain sig- ods (Schulman et al., 2017) to critic-free objectives
+nal volatile. The full co-evolutionary configuration such as GRPO (Shao et al., 2024) and RLOO (Ah-
+sustains the most stable positive gain: pruning not madian et al., 2024), with further improvements
+
+8
+
+Va idation Succe%% Rate (%)
+
+Environment Steps
+
+Experience Bank Size Mean E perience Gain
+
+Trajectory Length
+
+
+
+in multi-turn credit assignment through turn-level
+or stepwise signals (Feng et al., 2025; Wei et al.,
+2025; Wang et al., 2025a; Xie et al., 2026; Zhang
+et al., 2026b). However, the reusable exploration
+patterns within trajectories are still consumed once
+and discarded. EDGE retains the group-sampling
+backbone of GRPO but repurposes it to estimate
+which retrieved experiences currently improve ex-
+ploration and to transfer their effects into the policy.
+
+Experience-Augmented LLM Agents. External
+memory and experience reuse have been explored
+through prompting-based reflections (Shinn et al.,
+2023; Zhao et al., 2024; Yang et al., 2024; Fang
+et al., 2026; Ouyang et al., 2026) and persistent re-
+trieval during interaction (Chhikara et al., 2025; Xia
+et al., 2026; Wu et al., 2026; Ma et al., 2026; Wang
+et al., 2026; Zhang et al., 2026a). Recent meth-
+ods selectively replay past reasoning traces (Yan
+et al., 2025; Zhang et al., 2025a; Qin et al., 2025;
+Zhan et al., 2026), but primarily target single-turn
+tasks without the multi-turn, partially observable
+interaction loops of agentic settings. EMPO2 (Liu
+et al., 2026) pursues memory-free behavior through
+heuristic experience selection and off-policy dis-
+tillation. Concurrent SKILL0 (Lu et al., 2026b)
+progressively withdraws a preconstructed skill in-
+ventory under a decaying curriculum. In contrast,
+EDGE uses paired-rollout gains to validate and
+distill online experience while co-evolving its bank
+through utility-based pruning.
+
+Privileged Information and Self-Distillation.
+Leveraging training-time information unavailable
+at deployment spans LUPI (Vapnik and Vashist,
+2009), asymmetric actor-critic methods (Pinto
+et al., 2017), and context distillation in LLMs (Snell
+et al., 2022; Choudhury and Sodhi, 2025; Liu et al.,
+2026; Cheng et al., 2026), though these approaches
+are largely off-policy and suffer from distribution
+mismatch with the student’s own visitation. On-
+policy distillation (Agarwal et al., 2024; Ye et al.,
+2026) addresses this by supervising the student on
+its own sequences, and on-policy self-distillation
+(OPSD) (Zhao et al., 2026; Hübotter et al., 2026;
+Lu et al., 2026a) further removes the need for a sep-
+arate teacher. EDGE shares this structure but adds
+gain-based distillation gating to activate distillation
+only under verified positive gain and co-evolves the
+experience bank through utility-driven expansion
+and pruning.
+
+9
+
+6 Conclusion
+We presented EDGE, a framework for using re-
+trieved experience as a temporary training-time
+scaffold rather than a persistent inference-time de-
+pendency. EDGE estimates the marginal utility of
+retrieved experiences under the current policy, ad-
+mits only positive-gain scaffolds, and distills their
+behavioral effect into the standard experience-free
+policy. Across ALFWorld, WebShop, and seven
+search-based QA benchmarks, EDGE improves
+over RL and experience-augmented baselines, with
+especially large gains on exploration-intensive sub-
+tasks and strong retention after scaffold removal.
+The Qwen3 results further show that these gains
+transfer to a newer backbone and largely persist
+when the policy itself replaces GPT-4o as the re-
+flector. These results suggest a practical principle
+for agentic RL: external experience is most use-
+ful when it is dynamically validated, selectively
+applied, and ultimately internalized.
+
+Limitations
+While EDGE requires no extra environment roll-
+outs, it introduces training-time overhead for main-
+taining the experience bank, computing teacher–
+student comparisons, and invoking the reflector
+LLM. The effectiveness of gain-gating also de-
+pends on reward quality; as with all outcome-based
+RL methods, noisy or misspecified rewards would
+reduce the reliability of the marginal-gain estimates.
+In terms of empirical scope, our evaluation cov-
+ers two interactive environments and seven search-
+based QA benchmarks with Qwen2.5 models at
+the 1.5B and 7B scales and Qwen3 at the 4B scale;
+broader validation across model families, larger
+scales, and multimodal or real-world environments
+remains future work. More broadly, EDGE as-
+sumes experiences are discrete textual artifacts;
+extending the scaffold-to-parameter principle to
+latent memory representations is an open problem.
+
+Acknowledgements
+This work is supported by the Strategic Priority Re-
+search Program of Chinese Academy of Sciences
+under Grant XDA04080400 and Beijing Natural
+Science Foundation L259016.
+
+References
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Pi-
+
+otr Stanczyk, Sabela Ramos Garea, Matthieu Geist,
+
+
+
+and Olivier Bachem. 2024. On-policy distillation
+of language models: Learning from self-generated
+mistakes. In The Twelfth International Conference
+on Learning Representations, ICLR 2024, Vienna,
+Austria, May 7-11, 2024. OpenReview.net.
+
+Arash Ahmadian, Chris Cremer, Matthias Gallé,
+Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ah-
+met Üstün, and Sara Hooker. 2024. Back to basics:
+Revisiting reinforce-style optimization for learning
+from human feedback in llms. In Proceedings of the
+62nd Annual Meeting of the Association for Compu-
+tational Linguistics (Volume 1: Long Papers), ACL
+2024, Bangkok, Thailand, August 11-16, 2024, pages
+12248–12267. Association for Computational Lin-
+guistics.
+
+Zihao Cheng, Zeming Liu, Yingyu Shan, Xinyi
+Wang, Xiangrong Zhu, Yunpu Ma, Hongru Wang,
+Yuhang Guo, Wei Lin, and Yunhong Wang. 2026.
+Mem2evolve: Towards self-evolving agents via co-
+evolutionary capability expansion and experience dis-
+tillation. Preprint, arXiv:2604.10923.
+
+Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet
+Singh, and Deshraj Yadav. 2025. Mem0: Building
+production-ready ai agents with scalable long-term
+memory. Preprint, arXiv:2504.19413.
+
+Sanjiban Choudhury and Paloma Sodhi. 2025. Better
+than your teacher: LLM agents that learn from privi-
+leged AI feedback. In The Thirteenth International
+Conference on Learning Representations, ICLR 2025,
+Singapore, April 24-28, 2025. OpenReview.net.
+
+Gheorghe Comanici, Eric Bieber, Mike Schaekermann,
+Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Mar-
+cel Blistein, Ori Ram, Dan Zhang, Evan Rosen, Luke
+Marris, Sam Petulla, Colin Gaffney, Asaf Aharoni,
+Nathan Lintz, Tiago Cardal Pais, Henrik Jacobs-
+son, Idan Szpektor, Nan-Jiang Jiang, and 3416 oth-
+ers. 2025. Gemini 2.5: Pushing the frontier with
+advanced reasoning, multimodality, long context,
+and next generation agentic capabilities. Preprint,
+arXiv:2507.06261.
+
+Pim de Haan, Dinesh Jayaraman, and Sergey Levine.
+2019. Causal confusion in imitation learning. In
+Advances in Neural Information Processing Systems,
+volume 32. Curran Associates, Inc.
+
+Runnan Fang, Yuan Liang, Xiaobin Wang, Jialong Wu,
+Shuofei Qiao, Pengjun Xie, Fei Huang, Huajun Chen,
+and Ningyu Zhang. 2026. Memp: Exploring agent
+procedural memory. Preprint, arXiv:2508.06433.
+
+Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An.
+2025. Group-in-group policy optimization for llm
+agent training. In Advances in Neural Information
+Processing Systems, volume 38, pages 46375–46408.
+Curran Associates, Inc.
+
+Jonas Hübotter, Frederike Lübeck, Lejs Behric, An-
+ton Baumann, Marco Bagatella, Daniel Marta, Ido
+Hakimi, Idan Shenfeld, Thomas Kleine Buening,
+Carlos Guestrin, and Andreas Krause. 2026. Re-
+inforcement learning via self-distillation. Preprint,
+arXiv:2601.20802.
+
+Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon,
+Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei
+Han. 2025. Search-r1: Training llms to reason and
+leverage search engines with reinforcement learning.
+Preprint, arXiv:2503.09516.
+
+Leslie Pack Kaelbling, Michael L. Littman, and An-
+thony R. Cassandra. 1998. Planning and acting in
+partially observable stochastic domains. Artificial
+Intelligence, 101(1–2):99–134.
+
+Songze Li, Xiaoke Guo, Tianqi Liu, Biao Yi, Zhaoyan
+Gong, Zhiqiang Liu, Huajun Chen, and Wen Zhang.
+2026. What’s missing in screen-to-action? towards
+a UI-in-the-loop paradigm for multimodal GUI rea-
+soning. In Findings of the Association for Computa-
+tional Linguistics: ACL 2026, pages 17674–17690,
+San Diego, California, United States. Association for
+Computational Linguistics.
+
+Zeyuan Liu, Jeonghye Kim, Xufang Luo, Dongsheng
+Li, and Yuqing Yang. 2026. Exploratory memory-
+augmented llm agent via hybrid on- and off-policy
+optimization. Preprint, arXiv:2602.23008.
+
+Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Zi-Han Wang,
+Jinyang Wu, Qi Gu, Xunliang Cai, Weiming Lu,
+Jun Xiao, Yueting Zhuang, and Yongliang Shen.
+2026a. Self-distilled agentic reinforcement learning.
+Preprint, arXiv:2605.15155.
+
+Zhengxi Lu, Zhiyuan Yao, Jinyang Wu, Chengcheng
+Han, Qi Gu, Xunliang Cai, Weiming Lu, Jun Xiao,
+Yueting Zhuang, and Yongliang Shen. 2026b. Skill0:
+In-context agentic reinforcement learning for skill
+internalization. Preprint, arXiv:2604.02268.
+
+Weiyu Ma, Yongcheng Zeng, Yan Song, Xinyu Cui,
+Jian Zhao, Xuhui Liu, and Mohamed Elhoseiny.
+2026. Freshness-aware prioritized experience re-
+play for llm/vlm reinforcement learning. Preprint,
+arXiv:2604.16918.
+
+OpenAI, :, Aaron Hurst, Adam Lerer, Adam P. Goucher,
+Adam Perelman, Aditya Ramesh, Aidan Clark,
+AJ Ostrow, Akila Welihinda, Alan Hayes, Alec
+Radford, Aleksander Mądry, Alex Baker-Whitcomb,
+Alex Beutel, Alex Borzunov, Alex Carney, Alex
+Chow, Alex Kirillov, and 401 others. 2024. Gpt-4o
+system card. Preprint, arXiv:2410.21276.
+
+Siru Ouyang, Jun Yan, I-Hung Hsu, Yanfei Chen,
+Ke Jiang, Zifeng Wang, Rujun Han, Long T. Le,
+Samira Daruki, Xiangru Tang, Vishy Tirumalashetty,
+George Lee, Mahsan Rofouei, Hangfei Lin, Jiawei
+Han, Chen-Yu Lee, and Tomas Pfister. 2026. Reason-
+ingbank: Scaling agent self-evolving with reasoning
+memory. Preprint, arXiv:2509.25140.
+
+Lerrel Pinto, Marcin Andrychowicz, Peter Welinder,
+Wojciech Zaremba, and Pieter Abbeel. 2017. Asym-
+metric actor critic for image-based robot learning.
+Preprint, arXiv:1710.06542.
+10
+
+
+
+Yulei Qin, Xiaoyu Tan, Zhengbao He, Gang Li, Hao-
+jia Lin, Zongyi Li, Zihan Xu, Yuchen Shi, Siqi Cai,
+Renting Rui, Shaofei Cai, Yuzheng Cai, Xuan Zhang,
+Sheng Ye, Ke Li, and Xing Sun. 2025. Learn the
+ropes, then trust the wins: Self-imitation with pro-
+gressive exploration for agentic reinforcement learn-
+ing. Preprint, arXiv:2509.22601.
+
+Qwen, :, An Yang, Baosong Yang, Beichen Zhang,
+Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan
+Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan
+Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin
+Yang, Jiaxi Yang, Jingren Zhou, and 25 oth-
+ers. 2025. Qwen2.5 technical report. Preprint,
+arXiv:2412.15115.
+
+Stephane Ross, Geoffrey Gordon, and Drew Bagnell.
+2011. A reduction of imitation learning and struc-
+tured prediction to no-regret online learning. In Pro-
+ceedings of the Fourteenth International Conference
+on Artificial Intelligence and Statistics, volume 15 of
+Proceedings of Machine Learning Research, pages
+627–635, Fort Lauderdale, FL, USA. PMLR.
+
+John Schulman, Filip Wolski, Prafulla Dhariwal,
+Alec Radford, and Oleg Klimov. 2017. Prox-
+imal policy optimization algorithms. Preprint,
+arXiv:1707.06347.
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu,
+Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan
+Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024.
+Deepseekmath: Pushing the limits of mathemati-
+cal reasoning in open language models. Preprint,
+arXiv:2402.03300.
+
+Noah Shinn, Federico Cassano, Ashwin Gopinath,
+Karthik Narasimhan, and Shunyu Yao. 2023. Re-
+flexion: language agents with verbal reinforcement
+learning. In Advances in Neural Information Pro-
+cessing Systems 36: Annual Conference on Neural
+Information Processing Systems 2023, NeurIPS 2023,
+New Orleans, LA, USA, December 10 - 16, 2023.
+
+Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté,
+Yonatan Bisk, Adam Trischler, and Matthew J.
+Hausknecht. 2021. Alfworld: Aligning text and em-
+bodied environments for interactive learning. In 9th
+International Conference on Learning Representa-
+tions, ICLR 2021, Virtual Event, Austria, May 3-7,
+2021. OpenReview.net.
+
+Charlie Snell, Dan Klein, and Ruiqi Zhong.
+2022. Learning by distilling context. Preprint,
+arXiv:2209.15189.
+
+Vladimir Vapnik and Akshay Vashist. 2009. A new
+learning paradigm: Learning using privileged infor-
+mation. Neural Networks, 22(5):544–557. Advances
+in Neural Networks Research: IJCNN2009.
+
+Hanlin Wang, Chak Tou Leong, Jiashuo Wang, Jian
+Wang, and Wenjie Li. 2025a. Spa-rl: Reinforcing llm
+agents via stepwise progress attribution. Preprint,
+arXiv:2505.20732.
+Jiongxiao Wang, Qiaojing Yan, Yawei Wang, Yijun
+Tian, Soumya Smruti Mishra, Zhichao Xu, Megha
+Gandhi, Panpan Xu, and Lin Lee Cheong. 2026. Re-
+inforcement learning for self-improving agent with
+skill library. Preprint, arXiv:2512.17102.
+
+Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue
+Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan
+Yu, Minh Nhat Nguyen, Licheng Liu, Eli Gottlieb,
+Yiping Lu, Kyunghyun Cho, Jiajun Wu, Li Fei-Fei,
+Lijuan Wang, Yejin Choi, and Manling Li. 2025b.
+Ragen: Understanding self-evolution in llm agents
+via multi-turn reinforcement learning. Preprint,
+arXiv:2504.20073.
+
+Quan Wei, Siliang Zeng, Chenliang Li, William Brown,
+Oana Frunza, Wei Deng, Anderson Schneider, Yuriy
+Nevmyvaka, Yang Katie Zhao, Alfredo Garcia, and
+Mingyi Hong. 2025. Reinforcing multi-turn rea-
+soning in llm agents via turn-level reward design.
+Preprint, arXiv:2505.11821.
+
+Rong Wu, Xiaoman Wang, Jianbiao Mei, Pinlong Cai,
+Daocheng Fu, Cheng Yang, Licheng Wen, Xue-
+meng Yang, Yufan Shen, Yuxin Wang, and Bo-
+tian Shi. 2026. Evolver: Self-evolving llm agents
+through an experience-driven lifecycle. Preprint,
+arXiv:2510.16079.
+
+Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu,
+Kaide Zeng, Yu Wang, Siwei Han, Yiyang Zhou,
+Xujiang Zhao, Haifeng Chen, Zeyu Zheng, Cihang
+Xie, and Huaxiu Yao. 2026. Skillrl: Evolving agents
+via recursive skill-augmented reinforcement learning.
+Preprint, arXiv:2602.08234.
+
+Can Xie, Ruotong Pan, Xiangyu Wu, Zhang Yunfei,
+Jiayi Fu, Tingting Gao, and Guorui Zhou. 2026. Un-
+locking exploration in RLVR: Uncertainty-aware ad-
+vantage shaping for deeper reasoning. In Findings of
+the Association for Computational Linguistics: ACL
+2026, pages 19057–19076, San Diego, California,
+United States. Association for Computational Lin-
+guistics.
+
+Jianhao Yan, Yafu Li, Zican Hu, Zhi Wang, Ganqu Cui,
+Xiaoye Qu, Yu Cheng, and Yue Zhang. 2025. Learn-
+ing to reason under off-policy guidance. Preprint,
+arXiv:2504.14945.
+
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang,
+Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao,
+Chengen Huang, Chenxu Lv, Chujie Zheng, Day-
+iheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao
+Ge, Haoran Wei, Huan Lin, Jialong Tang, and 41
+others. 2025. Qwen3 technical report. Preprint,
+arXiv:2505.09388.
+
+Ling Yang, Zhaochen Yu, Tianjun Zhang, Shiyi Cao,
+Minkai Xu, Wentao Zhang, Joseph E. Gonzalez,
+and Bin Cui. 2024. Buffer of thoughts: Thought-
+augmented reasoning with large language models. In
+Advances in Neural Information Processing Systems
+38: Annual Conference on Neural Information Pro-
+cessing Systems 2024, NeurIPS 2024, Vancouver, BC,
+Canada, December 10 - 15, 2024.
+11
+
+
+
+Shunyu Yao, Howard Chen, John Yang, and Karthik
+Narasimhan. 2022. Webshop: Towards scalable real-
+world web interaction with grounded language agents.
+In Advances in Neural Information Processing Sys-
+tems 35: Annual Conference on Neural Information
+Processing Systems 2022, NeurIPS 2022, New Or-
+leans, LA, USA, November 28 - December 9, 2022.
+
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak
+Shafran, Karthik R. Narasimhan, and Yuan Cao. 2023.
+React: Synergizing reasoning and acting in language
+models. In The Eleventh International Conference
+on Learning Representations, ICLR 2023, Kigali,
+Rwanda, May 1-5, 2023. OpenReview.net.
+
+Tianzhu Ye, Li Dong, Xun Wu, Shaohan Huang, and
+Furu Wei. 2026. On-policy context distillation for
+language models. Preprint, arXiv:2602.12275.
+
+Runzhe Zhan, Yafu Li, Zhi Wang, Xiaoye Qu, Don-
+grui Liu, Jing Shao, Derek F. Wong, and Yu Cheng.
+2026. Exgrpo: Learning to reason from experience.
+Preprint, arXiv:2510.02245.
+
+Haozhen Zhang, Quanyu Long, Jianzhu Bao, Tao
+Feng, Weizhi Zhang, Haodong Yue, and Wenya
+Wang. 2026a. Memskill: Learning and evolving
+memory skills for self-evolving agents. Preprint,
+arXiv:2602.02474.
+
+Kaiyi Zhang, Ang Lv, Jinpeng Li, Yongbo Wang, Feng
+Wang, Haoyuan Hu, and Rui Yan. 2025a. Stephint:
+Multi-level stepwise hints enhance reinforcement
+learning to reason. Preprint, arXiv:2507.02841.
+
+Siwei Zhang, Yun Xiong, Xi Chen, Zi’an Jia, Ren-
+hong Huang, Jiarong Xu, and Jiawei Zhang. 2026b.
+Rapo: Expanding exploration for llm agents via
+retrieval-augmented policy optimization. Preprint,
+arXiv:2603.03078.
+
+Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang,
+Huan Lin, Baosong Yang, Pengjun Xie, An Yang,
+Dayiheng Liu, Junyang Lin, Fei Huang, and Jingren
+Zhou. 2025b. Qwen3 embedding: Advancing text
+embedding and reranking through foundation models.
+Preprint, arXiv:2506.05176.
+
+Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin,
+Yong-Jin Liu, and Gao Huang. 2024. Expel: LLM
+agents are experiential learners. In Thirty-Eighth
+AAAI Conference on Artificial Intelligence, AAAI
+2024, Thirty-Sixth Conference on Innovative Applica-
+tions of Artificial Intelligence, IAAI 2024, Fourteenth
+Symposium on Educational Advances in Artificial
+Intelligence, EAAI 2014, February 20-27, 2024, Van-
+couver, Canada, pages 19632–19642. AAAI Press.
+
+Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang,
+Guan Pang, Feiyu Chen, and Aditya Grover. 2026.
+Self-distilled reasoner: On-policy self-distillation for
+large language models. Preprint, arXiv:2601.18734.
+
+12
+
+
+
+A Theoretical Analysis of EDGE A.2 EMA Smoothing
+
+This section provides an analytical justification for Because ∆e is high-variance for small K and
+the four core components of EDGE, following the the true utility Ve(θ) drifts as the policy evolves,
+pipeline through which a retrieved experience e EDGE tracks each experience’s utility with an ex-
+influences the policy update: its marginal utility is ponential moving average:
+estimated (§A.1), smoothed across training steps
+
+U (t)
+
+(§A.2), used to gate and calibrate the RL advantage e = (1−µ)U (t−1)
+e + µ∆(t)
+
+e , µ ∈ (0, 1).
+(14)
+
+(§A.3), and channeled through on-support distilla- Under a local-stationarity approximation (succes-
+tion (§A.4).
+
+sive (t)
+∆
+
+Throughout, let cS denote the standard context, e treated as i.i.d. with variance σ2
+e ), the
+
+steady-state variance is Var(Ue) =
+µ
+
+cT = cS ⊕ e the privileged context, πθ the current 2−µ σ2
+e , which
+
+policy, and R(τ) ∈ {0, 1} the binary outcome re- is strictly less than σ2
+e for any µ < 1. Smaller
+
+ward. Teacher and student rollout subsets T T, T S µ yields greater smoothing at the cost of slower
+each have size K = G/2. All expectations and adaptation to genuine utility shifts. The pruning
+probabilities condition on fixed πθ and e. threshold η thus operates on a smoothed estimate
+
+of recent marginal utility rather than a single noisy
+A.1 Marginal-Gain Estimation and Gating contrast.
+Define the value of privileged information as the A.3 Pooled Advantage Calibration
+expected return gap between the privileged and
+
+When the gate activates, teacher rollouts enter the
+standard contexts: [ ] [ ] RL update and alter the advantage baseline. Let
+V bS , bT be the student and teacher mean returns, so
+e(θ) = Eτ∼πθ(·|cT) R(τ) − Eτ∼πθ(·|cS) R(τ) .
+
+(10) ∆e = bT − bS . T{he active set is
+The empirical marginal gain is T S ∪ T T, Me = 1,
+
+A = (15)
+1 ∑ T S, M
+
+∆ e = 0,
+e = R(τ) − 1 ∑
+
+R(τ). (11)
+K K
+
+τ∈T T τ∈T S with baseline bA = meanj∈A(Rj). When Me =
+
+Under the assumption that the two subsets are con- 1, the pooled baseline bpool =
+1
+2(bS + bT ) shifts
+
+ditionally independent and identically distributed the raw advantage numerators (prior to GRPO’s
+up to the presence of e, ∆e is unbiased for Ve(θ) standard-deviation normalization, which rescales
+with variance (pT (1−pT )+pS(1−pS))/K, where uniformly without changing signs) as follows:
+pT and pS are the respective success probabilities. ÃEDGE
+
+S = Ãwithin
+S − 1
+
+2∆e, (16)
+Decomposing ∆e as a sum of 2K independent
+terms each bounded in an interval of length 1/K, ÃEDGE
+
+T = Ãwithin
+T + 1
+
+2∆e, (17)
+Hoef(fding’s inequality y)ields ( ) where the superscript “within” denotes baselines
+Pr |∆ computed from each subset alone. Since Me = 1
+
+e − Ve(θ)| ≥ ϵ ≤ 2 exp −Kϵ2 . (12)
+implies ∆e > 0, student advantages are shifted
+
+EDGE converts this estimate into a binary gate: downward and teacher advantages upward: priv-
+ileged successes receive stronger reinforcement,
+
+Me = I(∆e > 0). (13) while unguided successes are tempered when the
+scaffold demonstrates superior performance. When
+
+The gate serves as a probabilistic risk-control mech- Me = 0, the teacher subset is excluded and no shift
+anism. By the one-sided form of (12), if an ex- is applied.
+perience is truly harmful with margin γ > 0
+(Ve(θ) ≤ −γ), then Pr(Me=1) ≤ exp(−Kγ2); A.4 On-Support Reverse-KL Distillation
+the symmetric bound holds for missed activations Directly imitating teacher-generated trajectories
+when Ve(θ) ≥ γ. When Me = 0, teacher rollouts risks covariate shift (Ross et al., 2011), as the
+are masked from both the RL and distillation losses, teacher may visit prefixes whose rationale depends
+and the update falls back to standard GRPO on the on information absent from the student context
+student subset. (causal misidentification; de Haan et al., 2019).
+
+13
+
+
+
+EDGE mitigates this by evaluating the teacher only • GRPO (Shao et al., 2024): A group-relative
+on student-generated prefixes. For a student trajec- policy optimization algorithm that estimates
+tory τ = (y1, . . . , ym) ∈ T S, let hSt = (cS, y<t) advantages from a group of sampled rollouts,
+and hTt = (cT, y<t). The on-support distillation eliminating the need for a separate critic net-
+loss is work.
+
+∑ ∑|τ |
+L̂distill(θ) = M • OPSD (Zhao et al., 2026): An on-policy self-
+
+e
+
+τ(∈T S t=1 ∥
+) ∥ ) distillation method that distills the model’s
+
+own high-quality rollouts back into itself to
+D S
+
+KL πθ(· | ht π T
+sg(θ)(· | ht ) , improve reasoning without external supervi-
+
+(18) sion.
+where sg(·) denotes stop-gradient. Unlike forward-
+KL imitation on teacher rollouts, this objective • GRPO+OPSD: A hybrid baseline that
+compares distributions only at prefixes the student combines GRPO’s group-relative advantage
+has actually reached, avoiding training on teacher- estimation with OPSD’s on-policy self-
+only states. The reverse-KL direction is mode- distillation objective.
+seeking with respect to the teacher, concentrating
+student mass on teacher-preferred actions rather • EvolveR (Wu et al., 2026): An experience-
+than spreading to cover the full teacher distribution, augmented training method that iteratively
+and thereby keeping the update conservative on the evolves a retrieval-augmented memory of past
+student support. trajectories to guide policy learning.
+
+The final actor loss combines both pathways:
+• GRPO+Mem0 (Chhikara et al., 2025): Aug-
+
+Lactor(θ) = LRL(θ;A) + λ L̂distill(θ). (19) ments GRPO with Mem0, a memory module
+that stores and retrieves past interaction ex-
+
+When Me = 0, both terms reduce to unprivileged- periences as additional context during both
+only updates (A = T S, L̂distill = 0). When Me = training and inference.
+1, the teacher subset raises the RL baseline (§A.3)
+and the reverse KL transfers privileged behavior • Search-R1 (Jin et al., 2025): Trains language
+into the standard-context policy. models with reinforcement learning to inter-
+B Implementation Details leave reasoning and search, serving as the stan-
+
+dard search-agent baseline in our QA evalua-
+B.1 Baselines tion.
+
+• GPT-4o (OpenAI et al., 2024): A closed-
+source multimodal LLM from OpenAI, used • SkillRL (Xia et al., 2026): A skill-based
+as a strong proprietary agent baseline with RL framework that extracts reusable skills
+standard prompting. from successful trajectories and conditions
+
+policy optimization on retrieved skill demon-
+• Gemini-2.5-Pro (Comanici et al., 2025): A strations.
+
+closed-source reasoning model from Google
+DeepMind, serving as another proprietary • EMPO2 (Liu et al., 2026): An ex-
+agent baseline with standard prompting. ploratory memory-augmented policy opti-
+
+• ReAct (Yao et al., 2023) mization method that leverages curated past
+: A prompting frame-
+
+experiences to enhance exploration during RL
+work that interleaves chain-of-thought reason-
+
+training.
+ing with environment actions, enabling LLMs
+to plan and act in a synergistic loop.
+
+These baselines span closed-source LLM agents,
+• Reflexion (Shinn et al., 2023): Extends Re- prompting-based reasoning frameworks, standard
+
+Act by appending verbal self-reflection af- RL algorithms, self-distillation methods, and
+ter task failures, allowing the agent to refine experience-augmented training approaches, en-
+its strategy across successive trials without abling a comprehensive evaluation of EDGE from
+weight updates. multiple perspectives.
+
+14
+
+
+
+B.2 RL-Training Configuration Configuration Value
+We implement EDGE on top of the verl-agent RL-Training
+framework (Feng et al., 2025) and train the model Actor learning rate 1e−6
+
+with the joint optimization objective in Eq. 19. To Maximum prompt length 4096
+reduce the computational cost of reverse-KL dis- Maximum response length 512
+tillation, we approximate the vocabulary-level loss Training batch size 16
+using only the top-k student tokens with the highest
+
+Rollout group size (G) 8
+log probabilities. The experience bank is initial-
+ized as empty, and each newly inserted experience Training mini-batch size 128
+is assigned an initial utility score of 0. For re- Rollout temperature 1.0
+trieval, we use the task instruction and initial envi- Training steps 200
+ronment observations as the query, encode experi- EDGE configuration
+ences with Qwen3-Embedding-0.6B (Zhang et al., Distillation weight λ 0.1
+2025b), and rank candidates by cosine similarity. Distillation top-k tokens 20
+We retrieve a top-m candidate pool and use the Utility pruning threshold η -0.1
+highest-scoring experience as the scaffold for the
+current rollout. Retrieval pool size (top-m) 6
+
+Expansion success threshold ξ 0.4
+After each training step, we update the expe-
+
+rience bank through both expansion and pruning. EMA momentum µ 0.5
+
+For expansion, if the success rate of a task category Maximum new experiences per step 3
+falls below the expansion threshold ξ, the reflector Table 4: RL Hyperparameters
+contrasts successful and failed trajectories from the
+same category and synthesizes up to three new ex-
+
+Method Rollout Old Prob. Ref. Prob. Update Reflector
+periences. We use GPT-4o (OpenAI et al., 2024) by
+default; in the EDGE (self) QA variant, the Qwen3 GRPO 263.41 14.10 14.23 55.38 –
+
+SkillRL 334.13 18.45 18.51 64.74 17.12
+policy itself serves as the reflector, with the remain- EMPO2 318.69 17.37 17.65 63.17 27.56
+ing framework unchanged. For pruning, we update EDGE 304.56 17.26 17.67 61.45 16.78
+
+the EMA utility score of each experience accord-
+Table 5: Per-step wall-clock time (seconds) on ALF-
+
+ing to Eq. 14 and remove experiences whose utility World with Qwen2.5-7B-Instruct.
+falls below the pruning threshold η. For both ALF-
+World and WebShop, we use the hyperparameters
+in Table 4. All training and profiling experiments C Further Analysis
+are conducted on 8× A100 80GB GPUs.
+
+C.1 Sensitivity to Distillation Weight λ.
+B.3 Computational Cost
+
+Figure 5 sweeps the distillation coefficient λ on
+We profile all methods under the same hard- Qwen2.5-1.5B-Instruct, revealing a clear trade-off
+ware and training configuration using Qwen2.5-7B- between the RL and distillation objectives. At
+Instruct on ALFWorld. Table 5 reports wall-clock λ = 1, the distillation term dominates the gradient
+seconds per training step. Rollout time includes and effectively freezes the policy near its initial per-
+experience retrieval and prompt construction, while formance (∼15%), preventing autonomous explo-
+reflector latency is reported separately. ration beyond the scaffold-prescribed behavior. At
+
+Summing all components, EDGE requires λ = 0.01, the policy recovers RL-driven improve-
+417.72 seconds per step, a 20.3% overhead over ment but internalizes scaffold-induced patterns too
+GRPO, mainly from retrieval, privileged-context slowly, converging roughly 5 points below the best
+forward computation, and reflection. Neverthe- setting. The moderate value λ = 0.1 balances
+less, it is 7.8% faster than SkillRL and 6.0% faster both pressures, sustaining steady improvement to
+than EMPO2. All methods use the same rollout approximately 80%—enough distillation to accel-
+budget; EDGE partitions the original group into erate internalization without suppressing the RL
+experience-conditioned and experience-free trajec- objective’s exploratory signal. We adopt this value
+tories without additional environment interactions. for all remaining experiments.
+
+15
+
+
+
+Case Failure mode Reflected experience Later evidence
+
+1. Clean bowl Navigates to destination before Locate object before placing Retrieved on a related task at step
+finding object 155; U=0.125
+
+2. Pillow on Issues take from source lacking Verify source before taking Utility rises to 0.578 by step 200
+sofa target (78 retrievals)
+3. Pick2 search Unstructured search before Search systematically before Retrieved on a related Pick2 task
+
+collecting targets storing at step 166
+4. No-op Repeats navigation after arrival Avoid repeated no-op moves Near-threshold utility; recovers
+movement to U=0.452 by step 200
+
+Table 6: Experience-bank co-evolution examples. Each case is extracted from saved failure trajectories, LLM
+
+reflection logs, retrieval logs, and utility traces.
+
+90
+λ=0.1
+
+80 λ=0.01
+λ=1
+
+70
+
+60
+
+50
+
+40
+
+30
+
+20
+
+10
+
+0
+0 20 40 60 80 100 120 140 160 180 200
+
+Training Steps
+
+Figure 5: Sensitivity of validation success rate to distil-
+lation weight λ.
+
+C.2 Case Study: Experience Bank Evolution
+Dynamics
+
+This section complements the aggregate gain-
+tracking curves in Figure 4 with entry-level ev-
+idence from ALFWorld training logs (Qwen2.5-
+7B-Instruct). We trace four representative cases
+(Table 6), each linking a rollout failure to the expe-
+rience it produces, its later retrieval, and the result-
+ing change in agent behavior. Cases 1–2 (Figure 6)
+illustrate the expansion phase, while Cases 3–4
+(Figure 7) illustrate late-stage refinement and non-
+stationary utility.
+
+The four cases reveal a natural curriculum
+driven by the policy’s evolving failure distribu-
+tion. Early failures are structural and broadly
+shared: destination-first wandering (Case 1) and
+hallucinated object presence (Case 2) affect many
+task variants, producing generic scaffolds with sus-
+tained high utility—these entries drive the initial
+bank growth visible in Figure 4. As the policy
+internalizes these broad strategies, the remaining
+failures narrow in scope. By step 165, single-object
+manipulation is reliable but coordinating two tar-
+gets remains fragile; Case 3’s search-then-collect
+scaffold addresses precisely this gap, and its moder-
+ate final utility (U=0.375) is consistent with Pick2
+remaining the hardest subtask in Table 3.
+
+Case 4 provides the most direct evidence for
+non-stationary utility. Entry step_914 (“avoid re-
+peating no-op movements”) hovers near the prun-
+ing boundary for roughly 20 steps (U=−0.026 at
+step 150, −0.085 at step 165) before recovering
+to U=0.452 by step 200. The mechanism is inter-
+pretable: once destination-first errors (Case 1) are
+resolved, no-op navigation loops become the domi-
+nant Pick2 failure mode, re-activating a previously
+marginal entry. A positive pruning threshold would
+have discarded it; the adopted η=−0.1 retains such
+latent-value entries until the policy’s distribution
+shifts in their favor.
+
+Together, these cases explain the aggregate bank
+trajectory in Figure 4—initial growth as generic
+scaffolds accumulate, followed by contraction as
+the policy absorbs broad patterns and the bank con-
+verges to a compact set of specialized, currently
+relevant entries.
+
+D Pseudocode
+Algorithm 1 outlines the full EDGE training loop,
+which alternates among three stages per iteration:
+experience-guided exploration scaffolding (§3.1),
+gain-gated privileged distillation (§3.2), and expe-
+rience bank evolution (§3.3).
+
+E Prompts
+This section provides the prompt templates used in
+our experiments. We include both rollout prompts
+and experience update prompts for ALFWorld and
+WebShop. The rollout prompts are used for action
+generation, while the update prompts are used to
+generate new state-aware experiences from con-
+16
+Validation Success Rate (%)
+
+
+
+Case 1: From destination-first wandering to object-first execution
+Failure (step 150). The task is put a clean bowl in shelf. The failed rollout immediately
+navigates to the destination and loops around empty shelves:
+go to shelf 3 → go to cabinet 1 → go to shelf 3 → go to cabinet 3 → examine shelf 3.
+
+Successful contrast. The agent first searches likely sources, finds a bowl in the fridge, takes and cleans
+it, then navigates to a shelf:
+go to fridge 1 → open fridge 1 → take bowl 1 from fridge 1 → clean bowl 1 with sinkbasin 1 → go
+to shelf 1.
+
+Reflected experience. Entry task_943: “First identify where the target bowl is, retrieve it, clean it if
+the goal requires a clean bowl, and only then move it to a shelf.”
+Later retrieval. At step 155, retrieved for put a clean bowl in diningtable (similarity 0.886).
+The rollout no longer starts by visiting the table; it locates, cleans, and places the bowl. Utility:
+U=0.125.
+
+Case 2: From hallucinated source to source verification
+Failure (step 58). The task is put some pillow on sofa. The agent goes to the sofa, observes
+box, creditcard, keychain, and newspaper—but no pillow. It issues take pillow from sofa 1,
+receives Nothing happens, and repeats similar invalid source assumptions.
+Successful contrast. The paired trajectory searches alternative sources, reaches armchair 1, observes
+pillow 1, takes it, and moves it to the sofa—only issuing take when the observation lists the target.
+Reflected experience. Entry step_1067: “Only use take <object> from <container> when the
+object is actually listed at that location; if not observed, do not repeat the same invalid action.”
+Later retrieval. At step 60, retrieved for put some keychain on ottoman, where the observation
+lacks the keychain—the same structural error. Utility evolves from 0.000 at creation to 0.578 at step
+200 after 78 retrievals.
+
+Figure 6: Experience bank evolution: early-stage expansion. Case 1 illustrates destination-first wandering
+corrected by an object-first scaffold; Case 2 illustrates hallucinated source actions corrected by an observation-gated
+
+rule.
+
+trasted trajectories.
+
+E.1 ALFWorld
+Figure 8 shows the ALFWorld rollout prompts. The
+first prompt provides retrieved experiences as ad-
+ditional context, while the second prompt removes
+external experiences and asks the agent to act only
+based on the current task, history, observation, and
+admissible actions.
+
+Figure 9 shows the prompt used to update the
+ALFWorld experience bank. Given a failed tra-
+jectory and a successful reference trajectory for
+the same task, the model generates compact state-
+aware experiences in JSON format.
+
+E.2 WebShop
+Figure 10 shows the WebShop rollout prompts. The
+experience-conditioned prompt includes retrieved
+memories, while the experience-free prompt relies
+only on the shopping instruction, interaction his-
+
+17
+tory, current observation, and admissible actions.
+Figure 11 shows the prompt used to update the
+
+WebShop experience bank. The model compares
+failed and successful shopping trajectories and pro-
+duces new state-aware experiences tied to visible
+state cues and available actions.
+
+F Dataset License
+Our experiments are based on the publicly avail-
+able ALFWorld (Shridhar et al., 2021) and Web-
+Shop (Yao et al., 2022) environments. Training,
+evaluation, and experience-bank construction are
+performed using trajectories generated from the
+task instances and interaction interfaces provided
+by these environments. We strictly follow the li-
+censes and usage terms of ALFWorld and Web-
+Shop, and use the resulting data only for academic
+research purposes. No private, personally identifi-
+able, or proprietary user data is used in any stage
+of training, evaluation, or experience construction.
+
+
+
+Case 3: From unstructured Pick2 search to systematic collection
+Failure (step 165). For find two ladle and put them in drawer, the policy spends actions on
+destination drawers or repeated navigation before confirming where the two targets are. Unlike early
+scaffolds, this failure involves managing object count, source search, and final placement simultaneously.
+Reflected experience. Entry task_995: “Identify likely locations of the target item, inspect those
+locations methodically, pick up each required object, and then place them into the specified container.
+Avoid random movement or opening unrelated containers before locating the targets.”
+Later retrieval. At step 166, retrieved for find two spatula and put them in drawer (similarity
+0.854). The rollout locates spatula 3 on a countertop, picks it up, checks other locations, and deposits
+it in a drawer. Utility reaches U=0.375 by steps 195–200.
+
+Case 4: Utility tracking separates useful retrieval from harmful repetition
+Creation (step 144). Entry step_914, “Avoid repeating a no-op movement,” is reflected from a find
+two tissuebox and put them in drawer failure. The rule: if the agent is already at the target
+location, it should inspect or act rather than re-issuing the same navigation action.
+Non-stationary utility. The entry is retrieved frequently but its utility is initially unstable: U=−0.026
+at step 150 and −0.085 at step 165—hovering near the pruning threshold η=−0.1 but remaining above
+it. Frequency-based retention would treat this entry as important despite its near-zero or negative
+marginal gain; conversely, a positive threshold would have discarded it prematurely.
+Recovery. As the policy reaches more states where repeated no-op movements are the dominant error,
+the entry becomes useful: utility turns positive at U=0.048 by step 180 and rises to U=0.452 at step
+200 after 142 retrievals. This illustrates why EDGE combines smoothed EMA tracking (Eq. (14)) with
+a mildly negative pruning threshold: experience utility can shift as the policy distribution changes, and
+premature pruning would discard entries whose value has not yet materialized.
+
+Figure 7: Experience bank evolution: late-stage refinement and non-stationary utility. Case 3 illustrates
+specialized multi-object coordination guidance; Case 4 illustrates an entry whose utility is initially near the pruning
+threshold but recovers as the policy’s failure distribution shifts.
+
+G LLMs Usage Statement
+We employed a Large Language Model (LLM)
+to assist exclusively in the editorial stage of
+manuscript preparation. Its role was limited to
+refining phrasing, correcting grammar, and enhanc-
+ing clarity and readability across different sections.
+The LLM had no involvement in formulating re-
+search ideas, designing experiments, or conducting
+analyses. All scientific contributions and findings
+are entirely the work of the authors. The authors
+have ensured that the use of the LLM complies
+with ethical standards, avoiding plagiarism and sci-
+entific misconduct.
+
+18
+
+
+
+Algorithm 1 EDGE: Experience-Distillation for Guided Exploration
+Input:
+
+Policy πθ; experience bank E ;
+Rollout group size G; distillation weight λ;
+EMA momentum µ; pruning threshold η;
+Success-rate threshold ξ.
+
+1: for each training iteration do
+2: for each task x in batch do
+3: Stage 1: Experience-Guided Exploration Scaffolding
+4: Retrieve top experience e ∈ E by embedding similarity.
+5: Sample G trajectories from πθ:
+
+T T (G/2): conditioned on cT = x⊕ e
+T S (G/2): conditioned on cS = x
+
+6: Compute marginal gain ∆e via Eq. (5).
+7: Stage 2: Gain-Gated Privileged Distillation
+8: if ∆e > 0 then
+9: Compute advantages over all G trajectories.
+
+10: for each τ ∈ T S do
+11: Forward πsg(θ) on τ with cT.
+12: Compute Ldistill via Eq. (18).
+13: end for
+14: else
+15: Compute advantages over T S only.
+16: Ldistill ← 0.
+17: end if
+18: Lactor ← LRL + λLdistill.
+19: Stage 3: Experience Bank Evolution
+20: Update EMA utility: (t) t
+
+e ← ( −1
+U (1− )
+
+µ)Ue + µ∆e.
+21: end for
+22: Update πθ with Lactor.
+23: Prune experiences with (t)
+
+Ue < η from E .
+24: Identify task categories with success rate < ξ.
+25: Generate new experiences via freflect(τ
+
++, τ−); insert into E .
+26: end for
+Output: Trained policy πθ (deployed without E).
+
+19
+
+
+
+Prompt: ALFWorld Agent Execution with Experience
+System Prompt:
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description}
+# Retrieved Relevant Experience
+{retrieved_experiences}
+Warning: These experiences may be outdated. Use them only if they align with your current observation.
+# Current Progress
+Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations
+and the corresponding actions you took: {action_history}
+You are now at step {current_step} and your current observation is: {current_observation}
+Your admissible actions of the current situation are: [{admissible_actions}].
+Now it is your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process
+MUST be enclosed within <think> </think> tags. Once you have finished your reasoning, you should choose an admissible
+action for the current step and present it within <action> </action> tags.
+
+Prompt: ALFWorld Agent Execution without Experience
+System Prompt:
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description}
+# Retrieved Relevant Experience
+No external general and task-specific experiences are provided. Use your learned strategy and current observation.
+# Current Progress
+Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations
+and the corresponding actions you took: {action_history}
+You are now at step {current_step} and your current observation is: {current_observation}
+Your admissible actions of the current situation are: [{admissible_actions}].
+Now it is your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process
+MUST be enclosed within <think> </think> tags. Once you have finished your reasoning, you should choose an admissible
+action for the current step and present it within <action> </action> tags.
+
+Figure 8: ALFWorld rollout prompts with and without retrieved experience.
+
+20
+
+
+
+Prompt: ALFWorld Experience Update
+System Prompt:
+You are an expert updating an ALFWorld state-aware experience bank. You are given one failed trajectory and one successful
+trajectory for the same task. Analyze the contrasted rollout snippets below and propose NEW or revised experiences that
+help the agent act better in the same environment state.
+# Task Information
+Task: {task_text}
+Task Type: {task_type}
+The task was {successfully/unsuccessfully} completed.
+# Contrasted Rollout Snippets
+Failed trajectory: {failed_text}
+Successful trajectory (reference): {success_text}
+# Requirements
+• Each experience must be state-aware, not a generic tip.
+• Focus on what the successful no-experience rollout did, and what the retrieved experience may have caused the agent to do
+
+incorrectly.
+• Prefer compact trigger language that can be matched at retrieval time.
+• Use actionable wording tied to admissible actions and visible state cues.
+• Return only JSON.
+
+Generate 1–{max_new_skills_per_update} new experiences.
+# Output Format Example
+{
+
+"title": "Plan object location before acting",
+"principle": "For this task type, first identify where the object is, then plan the sequence of actions.",
+"when_to_apply": "When the task involves finding or moving a specific object"
+
+}
+
+Figure 9: Prompt for updating the ALFWorld state-aware experience bank from contrasted failed and successful
+trajectories. The model is instructed to generate compact, state-aware experiences that can guide future retrieval and
+decision making.
+
+21
+
+
+
+Prompt: WebShop Agent Execution with Experience
+System Prompt:
+You are an expert autonomous agent operating in the WebShop e-commerce environment. Your task is to:
+{task_description}.
+# Retrieved Relevant Experience
+{retrieved_memories}
+Warning: These experiences may be outdated. Use them only if they align with your current observation.
+# Current Progress
+Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations
+and the corresponding actions you took: {action_history}
+You are now at step {current_step} and your current observation is: {current_observation}.
+Your admissible actions of the current situation are: {available_actions}
+Now it is your turn to take one action for the current step. You should first reason step-by-step about the current situation, then
+think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within
+<think> </think> tags. Once you have finished your reasoning, you should choose an admissible action for current step and
+present it within <action> </action> tags.
+
+Prompt: WebShop Agent Execution without Experience
+System Prompt:
+You are an expert autonomous agent operating in the WebShop e-commerce environment. Your task is to:
+{task_description}.
+# Retrieved Relevant Experience
+No external general and task-specific experiences are provided. Use your learned strategy and current observation.
+# Current Progress
+Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations
+and the corresponding actions you took: {action_history}
+You are now at step {current_step} and your current observation is: {current_observation}.
+Your admissible actions of the current situation are: {available_actions}
+Now it is your turn to take one action for the current step. You should first reason step-by-step about the current situation, then
+think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within
+<think> </think> tags. Once you have finished your reasoning, you should choose an admissible action for current step and
+present it within <action> </action> tags.
+
+Figure 10: WebShop rollout prompts with and without retrieved experience.
+
+22
+
+
+
+Prompt: WebShop Experience Update
+System Prompt:
+You are an expert updating a WebShop shopping state-aware experience bank. You are given one failed trajectory and
+one successful trajectory for the same task. Analyze the contrasted rollout snippets below and propose NEW or revised
+experiences that help the agent act better in the same environment state.
+# Task Information
+Task: {task_text}
+Task Type: {task_type}
+The task was {successfully/unsuccessfully} completed.
+# Contrasted Rollout Snippets
+Failed trajectory: {failed_text}
+Successful trajectory (reference): {success_text}
+# Requirements
+• Each experience must be state-aware, not a generic tip.
+• Focus on what the successful no-experience rollout did, and what the retrieved experience may have caused the agent to do
+
+incorrectly.
+• Prefer compact trigger language that can be matched at retrieval time.
+• Use actionable wording tied to available actions and visible state cues.
+• Return only JSON.
+
+Generate 1–{max_new_skills_per_update} new experiences.
+# Output Format Example
+{
+
+"title": "Verify Early, Abort Fast",
+"principle": "On the product page, immediately check category, core attributes, and price; if a key constraint is violated,
+
+leave the page at once.",
+"when_to_apply": "Within the first observation on every product detail page."
+
+}
+
+Figure 11: Prompt for updating the WebShop shopping state-aware experience bank from contrasted failed and
+successful trajectories. The model is instructed to generate compact, state-aware experiences that can guide future
+retrieval and shopping decisions.
+
+23
